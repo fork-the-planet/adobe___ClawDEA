@@ -26,6 +26,8 @@ data class DreamDetectionResult(
     val events: List<DriftEvent>,
     val status: String,
     val filteredCandidateCount: Int,
+    val attempted: Boolean = false,
+    val successful: Boolean = false,
 )
 
 class DreamWikiDetector(
@@ -56,12 +58,20 @@ class DreamWikiDetector(
                     events = emptyList(),
                     status = "not-due:${decision.reasons.joinToString(",")}",
                     filteredCandidateCount = 0,
+                    attempted = false,
+                    successful = false,
                 )
             }
         }
 
         return when (val result = invocation.run(projectRoot, buildPrompt(projectRoot))) {
-            is DreamInvocationResult.Unavailable -> DreamDetectionResult(emptyList(), result.reason, 0)
+            is DreamInvocationResult.Unavailable -> DreamDetectionResult(
+                events = emptyList(),
+                status = result.reason,
+                filteredCandidateCount = 0,
+                attempted = true,
+                successful = false,
+            )
             is DreamInvocationResult.Available -> validateScoreAndMap(projectRoot, result.json)
         }
     }
@@ -73,6 +83,8 @@ class DreamWikiDetector(
                 events = emptyList(),
                 status = "invalid:${validation.errors.joinToString("; ")}",
                 filteredCandidateCount = 0,
+                attempted = true,
+                successful = false,
             )
         }
 
@@ -81,6 +93,8 @@ class DreamWikiDetector(
             events = scored.map { DreamEventMapper.toEvent(projectRoot, it) },
             status = "ok",
             filteredCandidateCount = validation.candidates.size - scored.size,
+            attempted = true,
+            successful = true,
         )
     }
 

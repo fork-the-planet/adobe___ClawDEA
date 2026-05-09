@@ -29,7 +29,7 @@ class DriftDetectionService(private val project: Project) {
     private val listeners = mutableListOf<(events: List<DriftEvent>, applied: List<DriftEvent>) -> Unit>()
 
     /** Run detectors, filter dismissed, optionally auto-apply, store + notify. */
-    fun rescan(): Pair<List<DriftEvent>, List<DriftEvent>> = synchronized(mutex) {
+    fun rescan(runDreamScan: Boolean = false): Pair<List<DriftEvent>, List<DriftEvent>> = synchronized(mutex) {
         val basePath = project.basePath
         if (basePath == null) {
             lastEvents = emptyList()
@@ -46,6 +46,7 @@ class DriftDetectionService(private val project: Project) {
             beforeState = state,
             settingsState = settings,
             now = Instant.now(),
+            runDreamScan = runDreamScan,
         )
         val filtered = filterDismissed(collection.events, collection.newState)
         val (remaining, applied) = applyAndDismiss(filtered, settings.autoUpdateWiki, collection.newState, DriftAutoApplier.todayIso())
@@ -57,6 +58,8 @@ class DriftDetectionService(private val project: Project) {
         notifyListeners()
         return remaining to applied.events
     }
+
+    fun runDreamScanNow(): Pair<List<DriftEvent>, List<DriftEvent>> = rescan(runDreamScan = true)
 
     fun current(): List<DriftEvent> = synchronized(mutex) { lastEvents }
     fun lastAppliedEvents(): List<DriftEvent> = synchronized(mutex) { lastApplied }
@@ -103,6 +106,7 @@ class DriftDetectionService(private val project: Project) {
             beforeState: DriftState,
             settingsState: ClawDEASettings.State,
             now: Instant,
+            runDreamScan: Boolean = false,
             detectDreams: DreamDetectionRunner = DreamDetectionRunner { root, state, settings, instant, force, activeTurn ->
                 DreamWikiDetector().detect(
                     projectRoot = root,
@@ -128,7 +132,11 @@ class DriftDetectionService(private val project: Project) {
                 out += ManifestStaleDetector.detect(manifestPath)
             }
 
-            val dreamResult = detectDreamEvents(projectRoot, beforeState, settingsState, now, detectDreams)
+            val dreamResult = if (runDreamScan) {
+                detectDreamEvents(projectRoot, beforeState, settingsState, now, detectDreams)
+            } else {
+                cheapDreamDueCheck(beforeState, settingsState, now)
+            }
             out += dreamResult.events
 
             return RawCollection(
@@ -156,13 +164,49 @@ class DriftDetectionService(private val project: Project) {
                     state = state,
                     settings = settings,
                     now = now,
-                    force = false,
+                    force = true,
                     activeTurn = false,
                 )
             } catch (e: Throwable) {
                 LOG.warn("Dream wiki detection failed: ${e.message}")
-                DreamDetectionResult(emptyList(), "error:${e.javaClass.simpleName}:${e.message.orEmpty()}", 0)
+                DreamDetectionResult(
+                    events = emptyList(),
+                    status = "error:${e.javaClass.simpleName}:${e.message.orEmpty()}",
+                    filteredCandidateCount = 0,
+                    attempted = true,
+                    successful = false,
+                )
             }
+        }
+
+        private fun cheapDreamDueCheck(
+            state: DriftState,
+            settingsState: ClawDEASettings.State,
+            now: Instant,
+        ): DreamDetectionResult {
+            val settings = DreamWikiSettings(
+                enabled = settingsState.enableKnowledgeLayer && settingsState.enableDreamWikiMaintenance,
+                minElapsedHours = settingsState.dreamWikiMinElapsedHours,
+                minSignalUnits = settingsState.dreamWikiMinSignalUnits,
+                scanThrottleMinutes = settingsState.dreamWikiScanThrottleMinutes,
+            )
+            val decision = DreamDueGate.evaluate(
+                enabled = settings.enabled,
+                now = now,
+                state = state,
+                minElapsedHours = settings.minElapsedHours,
+                minSignalUnits = settings.minSignalUnits,
+                scanThrottleMinutes = settings.scanThrottleMinutes,
+                activeTurn = false,
+                lockHeld = state.dreamLockOwner.isNotBlank(),
+            )
+            return DreamDetectionResult(
+                events = emptyList(),
+                status = if (decision.due) "due" else "not-due:${decision.reasons.joinToString(",")}",
+                filteredCandidateCount = state.dreamFilteredCandidateCount,
+                attempted = false,
+                successful = false,
+            )
         }
 
         private fun updateDreamState(
@@ -171,12 +215,13 @@ class DriftDetectionService(private val project: Project) {
             now: Instant,
         ): DriftState {
             val nowText = now.toString()
-            val scannedSuccessfully = result.status == "ok"
             return beforeState.copy(
+                dreamLastRunAt = if (result.attempted) nowText else beforeState.dreamLastRunAt,
                 dreamLastDueCheckAt = nowText,
                 dreamLastStatus = result.status,
-                dreamLastSuccessfulScanAt = if (scannedSuccessfully) nowText else beforeState.dreamLastSuccessfulScanAt,
-                dreamProcessedSignalUnits = if (scannedSuccessfully) {
+                dreamLastSuccessfulScanAt = if (result.successful) nowText else beforeState.dreamLastSuccessfulScanAt,
+                dreamLastFailedScanAt = if (result.attempted && !result.successful) nowText else beforeState.dreamLastFailedScanAt,
+                dreamProcessedSignalUnits = if (result.successful) {
                     beforeState.dreamObservedSignalUnits
                 } else {
                     beforeState.dreamProcessedSignalUnits

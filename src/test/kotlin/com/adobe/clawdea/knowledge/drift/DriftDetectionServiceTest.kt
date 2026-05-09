@@ -66,7 +66,39 @@ class DriftDetectionServiceTest {
         assertEquals(emptyList<DriftEvent>(), applied.events)
     }
 
-    @Test fun `collectRaw appends dream events and persists dream success status`() {
+    @Test fun `collectRaw default path records cheap dream due check without invoking dreams`() {
+        val tmp = Files.createTempDirectory("svc-dream-cheap")
+        val now = Instant.parse("2026-05-09T12:34:56Z")
+        var invoked = false
+
+        val result = DriftDetectionService.collectRaw(
+            projectRoot = tmp,
+            claudeDir = tmp.resolve(".claude"),
+            beforeState = DriftState(dreamObservedSignalUnits = 7),
+            settingsState = ClawDEASettings.State().apply {
+                enableKnowledgeLayer = true
+                enableDreamWikiMaintenance = true
+                dreamWikiMinElapsedHours = 0
+                dreamWikiMinSignalUnits = 1
+                dreamWikiScanThrottleMinutes = 0
+            },
+            now = now,
+            detectDreams = { _, _, _, _, _, _ ->
+                invoked = true
+                DreamDetectionResult(emptyList(), "ok", 0, attempted = true, successful = true)
+            },
+        )
+
+        assertFalse(invoked)
+        assertEquals(emptyList<DriftEvent>(), result.events)
+        assertEquals("2026-05-09T12:34:56Z", result.newState.dreamLastDueCheckAt)
+        assertEquals("due", result.newState.dreamLastStatus)
+        assertEquals("", result.newState.dreamLastRunAt)
+        assertEquals("", result.newState.dreamLastSuccessfulScanAt)
+        assertEquals("", result.newState.dreamLastFailedScanAt)
+    }
+
+    @Test fun `collectRaw explicit dream scan appends dream events and persists success status`() {
         val tmp = Files.createTempDirectory("svc-dream")
         val claudeDir = tmp.resolve(".claude")
         val dreamEvent = DriftEvent.DreamMissingConcept(
@@ -97,25 +129,57 @@ class DriftDetectionServiceTest {
                 dreamWikiScanThrottleMinutes = 4
             },
             now = now,
+            runDreamScan = true,
             detectDreams = { _, _, settings, _, force, activeTurn ->
                 capturedSettings = settings
                 capturedForce = force
                 capturedActiveTurn = activeTurn
-                DreamDetectionResult(events = listOf(dreamEvent), status = "ok", filteredCandidateCount = 1)
+                DreamDetectionResult(events = listOf(dreamEvent), status = "ok", filteredCandidateCount = 1, attempted = true, successful = true)
             },
         )
 
         assertTrue(result.events.last() is DriftEvent.DreamMissingConcept)
         assertEquals(dreamEvent, result.events.last())
         assertEquals(DreamWikiSettings(enabled = true, minElapsedHours = 12, minSignalUnits = 3, scanThrottleMinutes = 4), capturedSettings)
-        assertEquals(false, capturedForce)
+        assertEquals(true, capturedForce)
         assertEquals(false, capturedActiveTurn)
         assertEquals("already-dismissed", result.newState.dismissed.single())
+        assertEquals("2026-05-09T12:34:56Z", result.newState.dreamLastRunAt)
         assertEquals("2026-05-09T12:34:56Z", result.newState.dreamLastDueCheckAt)
         assertEquals("ok", result.newState.dreamLastStatus)
         assertEquals("2026-05-09T12:34:56Z", result.newState.dreamLastSuccessfulScanAt)
+        assertEquals("", result.newState.dreamLastFailedScanAt)
         assertEquals(7, result.newState.dreamProcessedSignalUnits)
         assertEquals(1, result.newState.dreamFilteredCandidateCount)
+    }
+
+    @Test fun `collectRaw explicit dream scan persists failed status timestamp`() {
+        val tmp = Files.createTempDirectory("svc-dream-failed")
+        val now = Instant.parse("2026-05-09T12:34:56Z")
+
+        val result = DriftDetectionService.collectRaw(
+            projectRoot = tmp,
+            claudeDir = tmp.resolve(".claude"),
+            beforeState = DriftState(
+                dismissed = listOf("already-dismissed"),
+                dreamProcessedSignalUnits = 2,
+                dreamObservedSignalUnits = 7,
+            ),
+            settingsState = ClawDEASettings.State(),
+            now = now,
+            runDreamScan = true,
+            detectDreams = { _, _, _, _, _, _ ->
+                DreamDetectionResult(emptyList(), "invalid:Malformed JSON", 0, attempted = true, successful = false)
+            },
+        )
+
+        assertEquals("already-dismissed", result.newState.dismissed.single())
+        assertEquals("2026-05-09T12:34:56Z", result.newState.dreamLastRunAt)
+        assertEquals("2026-05-09T12:34:56Z", result.newState.dreamLastDueCheckAt)
+        assertEquals("invalid:Malformed JSON", result.newState.dreamLastStatus)
+        assertEquals("", result.newState.dreamLastSuccessfulScanAt)
+        assertEquals("2026-05-09T12:34:56Z", result.newState.dreamLastFailedScanAt)
+        assertEquals(2, result.newState.dreamProcessedSignalUnits)
     }
 
     @Test fun `auto-apply leaves review-only DreamMissingConcept pending`() {

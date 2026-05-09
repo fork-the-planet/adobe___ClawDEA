@@ -38,6 +38,8 @@ class DreamWikiDetectorTest {
         assertEquals(0, result.filteredCandidateCount)
         assertTrue(result.status.startsWith("not-due:"))
         assertTrue(result.status.contains("elapsed-time"))
+        assertFalse(result.attempted)
+        assertFalse(result.successful)
         assertFalse(invocation.called)
     }
 
@@ -63,6 +65,8 @@ class DreamWikiDetectorTest {
         assertEquals(projectRoot.resolve(".claude/wiki/index.md").normalize(), event.targetFile)
         assertEquals("Normalize concept links", event.title)
         assertTrue(event.autoApplicable)
+        assertTrue(result.attempted)
+        assertTrue(result.successful)
         assertTrue(invocation.called)
     }
 
@@ -81,6 +85,8 @@ class DreamWikiDetectorTest {
         assertEquals(emptyList<DriftEvent>(), result.events)
         assertEquals("Dreams timed out", result.status)
         assertEquals(0, result.filteredCandidateCount)
+        assertTrue(result.attempted)
+        assertFalse(result.successful)
         assertTrue(invocation.called)
     }
 
@@ -100,6 +106,8 @@ class DreamWikiDetectorTest {
         assertEquals(0, result.filteredCandidateCount)
         assertTrue(result.status.startsWith("invalid:"))
         assertTrue(result.status.contains("Malformed JSON"))
+        assertTrue(result.attempted)
+        assertFalse(result.successful)
     }
 
     @Test fun `prompt requires json only no writes cleanup preference and caps index content`() {
@@ -139,6 +147,8 @@ class DreamWikiDetectorTest {
         assertEquals(emptyList<DriftEvent>(), result.events)
         assertEquals("ok", result.status)
         assertEquals(1, result.filteredCandidateCount)
+        assertTrue(result.attempted)
+        assertTrue(result.successful)
     }
 
     private fun projectRootWithIndex(indexContent: String): Path {
