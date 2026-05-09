@@ -71,7 +71,7 @@ object DriftAutoApplier {
 
     private fun applyDreamLinkNormalization(event: DriftEvent.DreamLinkNormalization): Boolean {
         if (!event.autoApplicable) return false
-        if (wikiRootFor(event.targetFile) == null) return false
+        val wikiRoot = wikiRootFor(event.targetFile) ?: return false
         val pageRelativePath = relativizeWikiPage(event.targetFile) ?: return false
         val text = runCatching { Files.readString(event.targetFile) }.getOrNull() ?: return false
         val oldLinks = WikiLink.extractConceptLinks(pageRelativePath, text)
@@ -79,11 +79,15 @@ object DriftAutoApplier {
         if (oldLinks.size != 1) return false
 
         val oldLink = oldLinks.single()
+        if (!Files.exists(conceptPageFor(wikiRoot, oldLink.targetSlug))) return false
         val replacement = WikiLink.toMarkdownLink(pageRelativePath, oldLink.targetSlug)
         val updated = text.replace(oldLink.original, replacement)
         if (updated == text) return false
         return atomicWrite(event.targetFile, updated)
     }
+
+    private fun conceptPageFor(wikiRoot: Path, targetSlug: String): Path =
+        wikiRoot.resolve("concepts/$targetSlug.md").normalize()
 
     private fun wikiRootFor(targetFile: Path): Path? {
         val normalized = targetFile.normalize()
