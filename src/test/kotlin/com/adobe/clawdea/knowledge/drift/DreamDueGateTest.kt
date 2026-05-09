@@ -19,30 +19,23 @@ import java.time.Instant
 
 class DreamDueGateTest {
 
-    private val now = Instant.parse("2026-05-09T12:00:00Z")
+    private val now: Instant = Instant.parse("2026-05-09T12:00:00Z")
 
-    @Test fun `not due when knowledge layer is disabled`() {
-        val decision = evaluate(knowledgeLayerEnabled = false)
-
-        assertFalse(decision.due)
-        assertEquals(listOf("knowledge-layer-disabled"), decision.reasons)
-    }
-
-    @Test fun `not due when dream maintenance is disabled`() {
-        val decision = evaluate(dreamMaintenanceEnabled = false)
+    @Test fun `not due when disabled`() {
+        val decision = evaluate(enabled = false)
 
         assertFalse(decision.due)
-        assertEquals(listOf("dream-maintenance-disabled"), decision.reasons)
+        assertEquals(listOf("disabled"), decision.reasons)
     }
 
-    @Test fun `due when enough time and signal accumulated`() {
+    @Test fun `due when elapsed time and enough signal accumulated`() {
         val decision = evaluate()
 
         assertTrue(decision.due)
         assertEquals(emptyList<String>(), decision.reasons)
     }
 
-    @Test fun `not due when active turn is running`() {
+    @Test fun `not due with active turn and includes reason`() {
         val decision = evaluate(activeTurn = true)
 
         assertFalse(decision.due)
@@ -77,37 +70,6 @@ class DreamDueGateTest {
         assertTrue(decision.reasons.contains("scan-throttle"))
     }
 
-    @Test fun `not due when recent failed run is inside scan throttle`() {
-        val decision = evaluate(state = readyState().copy(
-            dreamLastDueCheckAt = "2026-05-09T11:00:00Z",
-            dreamLastFailedScanAt = "2026-05-09T11:55:00Z",
-        ))
-
-        assertFalse(decision.due)
-        assertTrue(decision.reasons.contains("scan-throttle"))
-    }
-
-    @Test fun `old failed run does not block when due check is old`() {
-        val decision = evaluate(state = readyState().copy(
-            dreamLastDueCheckAt = "2026-05-09T11:00:00Z",
-            dreamLastFailedScanAt = "2026-05-09T11:30:00Z",
-        ))
-
-        assertTrue(decision.due)
-        assertEquals(emptyList<String>(), decision.reasons)
-    }
-
-    @Test fun `status alone does not trigger failed scan throttle`() {
-        val decision = evaluate(state = readyState().copy(
-            dreamLastDueCheckAt = "2026-05-09T11:00:00Z",
-            dreamLastRunAt = "2026-05-09T11:55:00Z",
-            dreamLastStatus = "timeout",
-        ))
-
-        assertTrue(decision.due)
-        assertEquals(emptyList<String>(), decision.reasons)
-    }
-
     @Test fun `malformed timestamps do not block due when other gates pass`() {
         val decision = evaluate(
             state = DriftState(
@@ -134,6 +96,18 @@ class DreamDueGateTest {
         assertEquals(emptyList<String>(), decision.reasons)
     }
 
+    @Test fun `negative durations count as elapsed`() {
+        val decision = evaluate(
+            state = DriftState(dreamProcessedSignalUnits = 10, dreamObservedSignalUnits = 10),
+            minElapsedHours = -1,
+            minSignalUnits = 0,
+            scanThrottleMinutes = -1,
+        )
+
+        assertTrue(decision.due)
+        assertEquals(emptyList<String>(), decision.reasons)
+    }
+
     private fun readyState(): DriftState = DriftState(
         dreamLastSuccessfulScanAt = "2026-05-08T11:00:00Z",
         dreamLastDueCheckAt = "2026-05-09T11:00:00Z",
@@ -142,8 +116,7 @@ class DreamDueGateTest {
     )
 
     private fun evaluate(
-        knowledgeLayerEnabled: Boolean = true,
-        dreamMaintenanceEnabled: Boolean = true,
+        enabled: Boolean = true,
         state: DriftState = readyState(),
         minElapsedHours: Int = 24,
         minSignalUnits: Int = 5,
@@ -151,8 +124,7 @@ class DreamDueGateTest {
         activeTurn: Boolean = false,
         lockHeld: Boolean = false,
     ): DreamDueDecision = DreamDueGate.evaluate(
-        knowledgeLayerEnabled = knowledgeLayerEnabled,
-        dreamMaintenanceEnabled = dreamMaintenanceEnabled,
+        enabled = enabled,
         now = now,
         state = state,
         minElapsedHours = minElapsedHours,

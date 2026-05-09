@@ -19,8 +19,7 @@ data class DreamDueDecision(val due: Boolean, val reasons: List<String>)
 object DreamDueGate {
 
     fun evaluate(
-        knowledgeLayerEnabled: Boolean,
-        dreamMaintenanceEnabled: Boolean,
+        enabled: Boolean,
         now: Instant,
         state: DriftState,
         minElapsedHours: Int,
@@ -30,8 +29,7 @@ object DreamDueGate {
         lockHeld: Boolean,
     ): DreamDueDecision {
         val reasons = mutableListOf<String>()
-        if (!knowledgeLayerEnabled) reasons += "knowledge-layer-disabled"
-        if (!dreamMaintenanceEnabled) reasons += "dream-maintenance-disabled"
+        if (!enabled) reasons += "disabled"
         if (activeTurn) reasons += "active-turn"
         if (lockHeld) reasons += "lock-held"
         if (!hasElapsed(state.dreamLastSuccessfulScanAt, now, Duration.ofHours(minElapsedHours.toLong()))) {
@@ -47,13 +45,7 @@ object DreamDueGate {
     }
 
     private fun scanThrottleElapsed(state: DriftState, now: Instant, scanThrottleMinutes: Int): Boolean {
-        val threshold = Duration.ofMinutes(scanThrottleMinutes.toLong())
-        if (threshold.isZero || threshold.isNegative) return true
-        return scanThrottleTimestamps(state).all { hasElapsed(it, now, threshold) }
-    }
-
-    private fun scanThrottleTimestamps(state: DriftState): List<String> {
-        return listOf(state.dreamLastDueCheckAt, state.dreamLastFailedScanAt)
+        return hasElapsed(state.dreamLastDueCheckAt, now, Duration.ofMinutes(scanThrottleMinutes.toLong()))
     }
 
     private fun hasElapsed(timestamp: String, now: Instant, threshold: Duration): Boolean {
