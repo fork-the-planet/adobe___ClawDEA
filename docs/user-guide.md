@@ -117,7 +117,7 @@ These expand an in-plugin prompt template and forward to the CLI, which drives t
 |---------|-------------|
 | `/learn` | Capture a learning from the current session into the project wiki |
 | `/seed-wiki` | Bootstrap `.claude/wiki/` with an index and initial concept pages |
-| `/refresh-wiki` | Refresh auto-generated parts of the wiki (REPO_STATE, index) |
+| `/refresh-wiki [--dream|--status|--apply-low-risk]` | Review and refresh wiki drift, including Dream-backed maintenance suggestions |
 | `/seed-workspace` | Create a `.clawdea-workspace.md` manifest for cross-repo navigation |
 
 ### CLI-forwarded commands
@@ -231,6 +231,8 @@ The **primer** assembles `CLAUDE.md` + the auto-generated `.claude/REPO_STATE.md
 ### Wiki (`.claude/wiki/`)
 
 Concept pages live under `.claude/wiki/concepts/`. Each page names the files, classes, and entry points for a subsystem — Claude reads a concept page first to orient, then navigates directly instead of broad text search. Seed a fresh wiki with `/seed-wiki`, refresh auto-generated parts with `/refresh-wiki`, and audit for stale links with `/wiki-audit`. Capture a learning mid-session with `/learn`.
+
+Dream-backed wiki maintenance can detect low-signal index growth, stale/duplicate concept pages, and old wiki link syntax. Low-risk cleanup can apply automatically only when Auto-update wiki on drift is enabled; substantive page creation and rewrites still go through diff review.
 
 ### Personal notes (`.claude/notes/CURRENT.md`)
 

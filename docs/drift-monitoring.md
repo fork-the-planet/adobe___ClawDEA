@@ -26,6 +26,12 @@ Three signals, three failure modes, all in this repository:
 
 The fixture-replay tripwire's failure mode is "a PR shows up red," fitting the existing review workflow with no new dashboards or notifications.
 
+### Local Dream wiki maintenance
+
+IDE-local ClawDEA can use Claude Code Dreams as an opportunistic semantic detector for `.claude/wiki/`. Dream-backed checks feed the same drift banner and `/refresh-wiki` flow as deterministic wiki drift, but only run when elapsed time, signal count, scan throttle, and the filesystem lock allow it.
+
+The Dream path never edits source files. When **Auto-update wiki on drift** is enabled, only deterministic low-risk wiki cleanup can auto-apply; substantive concept-page creation and rewrites continue through diff review.
+
 ---
 
 ## File layout
