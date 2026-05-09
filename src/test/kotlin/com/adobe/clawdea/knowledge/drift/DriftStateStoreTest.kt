@@ -43,6 +43,8 @@ class DriftStateStoreTest {
                 dreamProcessedSignalUnits = 4,
                 dreamObservedSignalUnits = 11,
                 dreamFilteredCandidateCount = 2,
+                dreamLockOwner = "dream-worker",
+                dreamLockAcquiredAt = "2026-05-09T06:00:00Z",
             ))
         val state = DriftStateStore.read(claudeDir = tmp)
         assertEquals("2026-05-09T09:00:00Z", state.dreamLastRunAt)
@@ -52,6 +54,8 @@ class DriftStateStoreTest {
         assertEquals(4, state.dreamProcessedSignalUnits)
         assertEquals(11, state.dreamObservedSignalUnits)
         assertEquals(2, state.dreamFilteredCandidateCount)
+        assertEquals("dream-worker", state.dreamLockOwner)
+        assertEquals("2026-05-09T06:00:00Z", state.dreamLockAcquiredAt)
     }
 
     @Test fun `update modifies state atomically`() {
@@ -83,5 +87,7 @@ class DriftStateStoreTest {
         assertEquals(0, state.dreamProcessedSignalUnits)
         assertEquals(0, state.dreamObservedSignalUnits)
         assertEquals(0, state.dreamFilteredCandidateCount)
+        assertEquals("", state.dreamLockOwner)
+        assertEquals("", state.dreamLockAcquiredAt)
     }
 }

@@ -77,6 +77,28 @@ class DreamDueGateTest {
         assertTrue(decision.reasons.contains("scan-throttle"))
     }
 
+    @Test fun `not due when recent failed run is inside scan throttle`() {
+        val decision = evaluate(state = readyState().copy(
+            dreamLastDueCheckAt = "2026-05-09T11:00:00Z",
+            dreamLastRunAt = "2026-05-09T11:55:00Z",
+            dreamLastStatus = "timeout",
+        ))
+
+        assertFalse(decision.due)
+        assertTrue(decision.reasons.contains("scan-throttle"))
+    }
+
+    @Test fun `old failed run does not block when due check is old`() {
+        val decision = evaluate(state = readyState().copy(
+            dreamLastDueCheckAt = "2026-05-09T11:00:00Z",
+            dreamLastRunAt = "2026-05-09T11:30:00Z",
+            dreamLastStatus = "timeout",
+        ))
+
+        assertTrue(decision.due)
+        assertEquals(emptyList<String>(), decision.reasons)
+    }
+
     @Test fun `malformed timestamps do not block due when other gates pass`() {
         val decision = evaluate(
             state = DriftState(

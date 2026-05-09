@@ -25,4 +25,6 @@ data class DriftState(
     val dreamProcessedSignalUnits: Int = 0,
     val dreamObservedSignalUnits: Int = 0,
     val dreamFilteredCandidateCount: Int = 0,
+    val dreamLockOwner: String = "",
+    val dreamLockAcquiredAt: String = "",
 )

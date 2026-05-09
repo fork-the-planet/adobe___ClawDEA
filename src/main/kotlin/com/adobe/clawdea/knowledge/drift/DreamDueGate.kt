@@ -40,10 +40,24 @@ object DreamDueGate {
         if (minSignalUnits > 0 && state.dreamObservedSignalUnits - state.dreamProcessedSignalUnits < minSignalUnits) {
             reasons += "insufficient-signal"
         }
-        if (!hasElapsed(state.dreamLastDueCheckAt, now, Duration.ofMinutes(scanThrottleMinutes.toLong()))) {
+        if (!scanThrottleElapsed(state, now, scanThrottleMinutes)) {
             reasons += "scan-throttle"
         }
         return DreamDueDecision(due = reasons.isEmpty(), reasons = reasons)
+    }
+
+    private fun scanThrottleElapsed(state: DriftState, now: Instant, scanThrottleMinutes: Int): Boolean {
+        val threshold = Duration.ofMinutes(scanThrottleMinutes.toLong())
+        if (threshold.isZero || threshold.isNegative) return true
+        return scanThrottleTimestamps(state).all { hasElapsed(it, now, threshold) }
+    }
+
+    private fun scanThrottleTimestamps(state: DriftState): List<String> {
+        val timestamps = mutableListOf(state.dreamLastDueCheckAt)
+        if (state.dreamLastStatus.isNotBlank() && state.dreamLastStatus != "ok") {
+            timestamps += state.dreamLastRunAt
+        }
+        return timestamps
     }
 
     private fun hasElapsed(timestamp: String, now: Instant, threshold: Duration): Boolean {
