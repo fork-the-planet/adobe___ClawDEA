@@ -95,7 +95,7 @@ object DreamOutputValidator {
             val candidate = validateCandidate(index, element, errors)
             if (candidate != null) candidates += candidate
         }
-        return DreamValidationResult(candidates, errors)
+        return DreamValidationResult(if (errors.isEmpty()) candidates else emptyList(), errors)
     }
 
     private fun validateCandidate(index: Int, element: JsonElement, errors: MutableList<String>): DreamCandidate? {
