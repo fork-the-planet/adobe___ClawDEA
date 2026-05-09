@@ -98,6 +98,45 @@ class DriftDetectionServiceTest {
         assertEquals("", result.newState.dreamLastFailedScanAt)
     }
 
+    @Test fun `collectRaw default path increments cheap local dream signal units without invoking dreams`() {
+        val tmp = Files.createTempDirectory("svc-dream-signals")
+        val claudeDir = tmp.resolve(".claude")
+        Files.createDirectories(claudeDir.resolve("wiki/concepts"))
+        Files.writeString(claudeDir.resolve("wiki/index.md"), "# Wiki")
+        Files.writeString(claudeDir.resolve("wiki/concepts/drift.md"), "# Drift")
+        Files.writeString(claudeDir.resolve("REPO_STATE.md"), "repo state")
+        Files.createDirectories(claudeDir.resolve("notes"))
+        Files.writeString(claudeDir.resolve("notes/CURRENT.md"), "note")
+        val now = Instant.parse("2026-05-09T12:34:56Z")
+        var invoked = false
+
+        val result = DriftDetectionService.collectRaw(
+            projectRoot = tmp,
+            claudeDir = claudeDir,
+            beforeState = DriftState(
+                dreamLastSuccessfulScanAt = "2026-05-08T12:34:56Z",
+                dreamObservedSignalUnits = 0,
+                dreamProcessedSignalUnits = 0,
+            ),
+            settingsState = ClawDEASettings.State().apply {
+                enableKnowledgeLayer = true
+                enableDreamWikiMaintenance = true
+                dreamWikiMinElapsedHours = 0
+                dreamWikiMinSignalUnits = 1
+                dreamWikiScanThrottleMinutes = 0
+            },
+            now = now,
+            detectDreams = { _, _, _, _, _, _ ->
+                invoked = true
+                DreamDetectionResult(emptyList(), "ok", 0, attempted = true, successful = true)
+            },
+        )
+
+        assertFalse(invoked)
+        assertTrue(result.newState.dreamObservedSignalUnits > 0)
+        assertEquals("due", result.newState.dreamLastStatus)
+    }
+
     @Test fun `collectRaw explicit dream scan appends dream events and persists success status`() {
         val tmp = Files.createTempDirectory("svc-dream")
         val claudeDir = tmp.resolve(".claude")
@@ -154,6 +193,64 @@ class DriftDetectionServiceTest {
         assertEquals("", result.newState.dreamLastFailedScanAt)
         assertEquals(7, result.newState.dreamProcessedSignalUnits)
         assertEquals(1, result.newState.dreamFilteredCandidateCount)
+    }
+
+    @Test fun `collectRaw explicit dream scan holds filesystem lock while running and releases it`() {
+        val tmp = Files.createTempDirectory("svc-dream-lock")
+        val claudeDir = tmp.resolve(".claude")
+        val lockFile = claudeDir.resolve("wiki/.dream.lock")
+        val now = Instant.parse("2026-05-09T12:34:56Z")
+        var lockObservedDuringScan = false
+
+        val result = DriftDetectionService.collectRaw(
+            projectRoot = tmp,
+            claudeDir = claudeDir,
+            beforeState = DriftState(dreamObservedSignalUnits = 3),
+            settingsState = ClawDEASettings.State().apply {
+                enableKnowledgeLayer = true
+                enableDreamWikiMaintenance = true
+            },
+            now = now,
+            runDreamScan = true,
+            detectDreams = { _, _, _, _, _, _ ->
+                lockObservedDuringScan = Files.exists(lockFile)
+                DreamDetectionResult(emptyList(), "ok", 0, attempted = true, successful = true)
+            },
+        )
+
+        assertTrue(lockObservedDuringScan)
+        assertFalse(Files.exists(lockFile))
+        assertEquals("ok", result.newState.dreamLastStatus)
+    }
+
+    @Test fun `collectRaw explicit dream scan skips invocation when filesystem lock already exists`() {
+        val tmp = Files.createTempDirectory("svc-dream-lock-held")
+        val claudeDir = tmp.resolve(".claude")
+        val lockFile = claudeDir.resolve("wiki/.dream.lock")
+        Files.createDirectories(lockFile.parent)
+        Files.writeString(lockFile, "other-window\n2026-05-09T12:00:00Z")
+        val now = Instant.parse("2026-05-09T12:34:56Z")
+        var invoked = false
+
+        val result = DriftDetectionService.collectRaw(
+            projectRoot = tmp,
+            claudeDir = claudeDir,
+            beforeState = DriftState(dreamObservedSignalUnits = 3),
+            settingsState = ClawDEASettings.State().apply {
+                enableKnowledgeLayer = true
+                enableDreamWikiMaintenance = true
+            },
+            now = now,
+            runDreamScan = true,
+            detectDreams = { _, _, _, _, _, _ ->
+                invoked = true
+                DreamDetectionResult(emptyList(), "ok", 0, attempted = true, successful = true)
+            },
+        )
+
+        assertFalse(invoked)
+        assertTrue(Files.exists(lockFile))
+        assertEquals("not-run:lock-held", result.newState.dreamLastStatus)
     }
 
     @Test fun `collectRaw explicit dream scan respects held dream lock`() {

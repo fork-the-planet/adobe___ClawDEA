@@ -71,7 +71,7 @@ class ClaudeDreamInvocation internal constructor(
             "--no-session-persistence",
             "--disallowedTools",
             DISALLOWED_TOOLS,
-            prompt,
+            dreamPrompt(prompt),
         )
 
         val result = try {
@@ -113,6 +113,8 @@ class ClaudeDreamInvocation internal constructor(
     private companion object {
         const val DISALLOWED_TOOLS = "Write,Edit,MultiEdit,NotebookEdit,Bash"
         val DREAM_CAPABILITY_REGEX = Regex("""(?i)(/dream|\bdream\b)""")
+
+        fun dreamPrompt(prompt: String): String = "/dream\n\n$prompt"
     }
 }
 

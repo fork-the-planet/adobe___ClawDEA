@@ -57,6 +57,25 @@ class DreamInvocationTest {
         assertEquals("Write,Edit,MultiEdit,NotebookEdit,Bash", promptCommand[promptCommand.indexOf("--disallowedTools") + 1])
     }
 
+    @Test fun `Dream capable invocation sends dream command in prompt input`() {
+        val runner = RecordingDreamProcessRunner(
+            DreamProcessResult(exitCode = 0, stdout = "Usage: /dream\nOptions: --disallowedTools", stderr = "", timedOut = false),
+            DreamProcessResult(exitCode = 0, stdout = """{"candidates": []}""", stderr = "", timedOut = false),
+        )
+        val invocation = ClaudeDreamInvocation(
+            timeoutSeconds = 5,
+            runner = runner,
+            cliPathProvider = { "claude-test" },
+            environmentProvider = { mutableMapOf("PATH" to "/test/bin") },
+        )
+
+        invocation.run(Files.createTempDirectory("dream-invocation"), "Return JSON only")
+
+        val promptInput = runner.calls[1].command.last()
+        assertTrue(promptInput.startsWith("/dream"))
+        assertTrue(promptInput.contains("Return JSON only"))
+    }
+
     @Test fun `unsupported safe execution returns unavailable and does not run prompt command`() {
         val runner = RecordingDreamProcessRunner(
             DreamProcessResult(exitCode = 0, stdout = "Usage: /dream", stderr = "", timedOut = false),
