@@ -43,4 +43,31 @@ class RefreshWikiArgsTest {
             RefreshWikiArgs.parse("  --apply-low-risk   --dream --status  "),
         )
     }
+
+    @Test
+    fun `status formatter includes pending event counts and gate reasons`() {
+        val status = RefreshWikiStatus(
+            lastRunAt = "2026-05-09T10:00:00Z",
+            lastSuccessfulScanAt = "",
+            lastStatus = "not-due:elapsed-time",
+            filteredCandidateCount = 3,
+            pendingEventTypes = listOf("CodeRename", "DreamMissingConcept", "CodeRename"),
+            dreamGateDue = false,
+            dreamGateReasons = listOf("elapsed-time", "insufficient-signal"),
+            observedSignalUnits = 7,
+            processedSignalUnits = 4,
+            minSignalUnits = 5,
+        )
+
+        assertEquals(
+            "Dream wiki status: last run 2026-05-09T10:00:00Z; " +
+                "last successful scan never; " +
+                "last status not-due:elapsed-time; " +
+                "filtered candidates 3; " +
+                "pending drift 3 (CodeRename=2, DreamMissingConcept=1); " +
+                "gate not due (elapsed-time,insufficient-signal); " +
+                "signal 3/5.",
+            RefreshWikiStatusFormatter.format(status),
+        )
+    }
 }

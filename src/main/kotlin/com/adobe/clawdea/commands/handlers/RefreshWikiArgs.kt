@@ -27,3 +27,45 @@ data class RefreshWikiArgs(
         }
     }
 }
+
+data class RefreshWikiStatus(
+    val lastRunAt: String,
+    val lastSuccessfulScanAt: String,
+    val lastStatus: String,
+    val filteredCandidateCount: Int,
+    val pendingEventTypes: List<String>,
+    val dreamGateDue: Boolean,
+    val dreamGateReasons: List<String>,
+    val observedSignalUnits: Int,
+    val processedSignalUnits: Int,
+    val minSignalUnits: Int,
+)
+
+object RefreshWikiStatusFormatter {
+    fun format(status: RefreshWikiStatus): String {
+        val pendingSummary = if (status.pendingEventTypes.isEmpty()) {
+            "none"
+        } else {
+            status.pendingEventTypes
+                .groupingBy { it }
+                .eachCount()
+                .entries
+                .sortedBy { it.key }
+                .joinToString(", ") { "${it.key}=${it.value}" }
+        }
+        val gateSummary = if (status.dreamGateDue) {
+            "due"
+        } else {
+            "not due (${status.dreamGateReasons.ifEmpty { listOf("unknown") }.joinToString(",")})"
+        }
+        return "Dream wiki status: last run ${valueOrNever(status.lastRunAt)}; " +
+            "last successful scan ${valueOrNever(status.lastSuccessfulScanAt)}; " +
+            "last status ${status.lastStatus.ifBlank { "none" }}; " +
+            "filtered candidates ${status.filteredCandidateCount}; " +
+            "pending drift ${status.pendingEventTypes.size} ($pendingSummary); " +
+            "gate $gateSummary; " +
+            "signal ${status.observedSignalUnits - status.processedSignalUnits}/${status.minSignalUnits}."
+    }
+
+    private fun valueOrNever(value: String): String = value.ifBlank { "never" }
+}

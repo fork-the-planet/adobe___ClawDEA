@@ -972,24 +972,10 @@ class ChatPanel(
             com.adobe.clawdea.knowledge.workspace.seed.SeedPromptBuilder.build(roots, suggested, suggestedDeps, existing)
         })
 
-        commandRegistry.register("/refresh-wiki", LocalHandler(
+        commandRegistry.register("/refresh-wiki", com.adobe.clawdea.commands.handlers.BridgeExpandingHandler(
             CommandInfo("/refresh-wiki", "Review and fix detected wiki drift events", CommandCategory.BRIDGE),
-        ) { rawArgs, _ ->
-            val args = RefreshWikiArgs.parse(rawArgs)
-            if (args.statusOnly) {
-                appendHtml(renderer.renderInfoMessage(refreshWikiStatus()))
-                return@LocalHandler
-            }
-
-            appendHtml(renderer.renderInfoMessage("Refreshing wiki drift..."))
-            scope.launch {
-                val result = withContext(Dispatchers.IO) { refreshWiki(args) }
-                if (result.sendToBridge) {
-                    dispatchSendToBridge(result.text, renderInChat = false)
-                } else {
-                    appendHtml(renderer.renderInfoMessage(result.text))
-                }
-            }
+        ) { rawArgs ->
+            refreshWiki(RefreshWikiArgs.parse(rawArgs))
         })
 
         // Index query commands
@@ -1018,17 +1004,13 @@ class ChatPanel(
         commandRegistry.register("/wiki-audit", com.adobe.clawdea.commands.handlers.WikiAuditCommandHandler(project))
     }
 
-    private data class RefreshWikiCommandResult(
-        val text: String,
-        val sendToBridge: Boolean,
-    )
-
-    private fun refreshWiki(args: RefreshWikiArgs): RefreshWikiCommandResult {
+    private fun refreshWiki(args: RefreshWikiArgs): String {
         if (args.applyLowRisk && !ClawDEASettings.getInstance().state.autoUpdateWiki) {
-            return RefreshWikiCommandResult(
-                "Applying low-risk wiki drift fixes requires enabling Auto-update wiki on drift.",
-                sendToBridge = false,
-            )
+            return "Applying low-risk wiki drift fixes requires enabling Auto-update wiki on drift."
+        }
+
+        if (args.statusOnly) {
+            return refreshWikiStatus()
         }
 
         val service = project.getService(com.adobe.clawdea.knowledge.drift.DriftDetectionService::class.java)
@@ -1039,42 +1021,78 @@ class ChatPanel(
         }
 
         if (args.applyLowRisk) {
-            return RefreshWikiCommandResult(formatAppliedWikiDrift(service.lastAppliedEvents()), sendToBridge = false)
+            return formatAppliedWikiDrift(service.lastAppliedEvents())
         }
 
         if (events.isEmpty()) {
-            return RefreshWikiCommandResult("(no drift events detected)", sendToBridge = false)
+            return "(no drift events detected)"
         }
 
-        return RefreshWikiCommandResult(buildRefreshWikiPrompt(events), sendToBridge = true)
+        return buildRefreshWikiPrompt(events)
     }
 
     private fun refreshWikiStatus(): String {
         val basePath = project.basePath ?: return "Dream wiki status: project path unavailable."
         val state = com.adobe.clawdea.knowledge.drift.DriftStateStore.read(java.nio.file.Paths.get(basePath).resolve(".claude"))
-        fun valueOrNever(value: String): String = value.ifBlank { "never" }
-        return "Dream wiki status: last run ${valueOrNever(state.dreamLastRunAt)}; " +
-            "last successful scan ${valueOrNever(state.dreamLastSuccessfulScanAt)}; " +
-            "last status ${state.dreamLastStatus.ifBlank { "none" }}; " +
-            "filtered candidates ${state.dreamFilteredCandidateCount}."
+        val settings = ClawDEASettings.getInstance().state
+        val decision = com.adobe.clawdea.knowledge.drift.DreamDueGate.evaluate(
+            enabled = settings.enableKnowledgeLayer && settings.enableDreamWikiMaintenance,
+            now = java.time.Instant.now(),
+            state = state,
+            minElapsedHours = settings.dreamWikiMinElapsedHours,
+            minSignalUnits = settings.dreamWikiMinSignalUnits,
+            scanThrottleMinutes = settings.dreamWikiScanThrottleMinutes,
+            activeTurn = false,
+            lockHeld = state.dreamLockOwner.isNotBlank(),
+        )
+        val service = project.getService(com.adobe.clawdea.knowledge.drift.DriftDetectionService::class.java)
+        return RefreshWikiStatusFormatter.format(
+            RefreshWikiStatus(
+                lastRunAt = state.dreamLastRunAt,
+                lastSuccessfulScanAt = state.dreamLastSuccessfulScanAt,
+                lastStatus = state.dreamLastStatus,
+                filteredCandidateCount = state.dreamFilteredCandidateCount,
+                pendingEventTypes = service.current().map { refreshWikiEventName(it) },
+                dreamGateDue = decision.due,
+                dreamGateReasons = decision.reasons,
+                observedSignalUnits = state.dreamObservedSignalUnits,
+                processedSignalUnits = state.dreamProcessedSignalUnits,
+                minSignalUnits = settings.dreamWikiMinSignalUnits,
+            ),
+        )
     }
 
     private fun formatAppliedWikiDrift(events: List<com.adobe.clawdea.knowledge.drift.DriftEvent>): String {
         if (events.isEmpty()) return "No low-risk wiki drift fixes were applied."
         val summary = events.joinToString(", ") { event ->
-            when (event) {
-                is com.adobe.clawdea.knowledge.drift.DriftEvent.CodeRename -> "CodeRename ${event.wikiPage.fileName}"
-                is com.adobe.clawdea.knowledge.drift.DriftEvent.ManifestStale -> "ManifestStale ${event.repoKey}"
-                is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamIndexCleanup -> "DreamIndexCleanup ${event.targetFile.fileName}"
-                is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamLinkNormalization -> "DreamLinkNormalization ${event.targetFile.fileName}"
-                is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamSourceReferenceFix -> "DreamSourceReferenceFix ${event.targetFile.fileName}"
-                is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamDuplicateConcept -> "DreamDuplicateConcept ${event.targetFile.fileName}"
-                is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamStaleConcept -> "DreamStaleConcept ${event.targetFile.fileName}"
-                is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamMissingConcept -> "DreamMissingConcept ${event.targetFile.fileName}"
-            }
+            "${refreshWikiEventName(event)} ${refreshWikiEventTarget(event)}"
         }
         return "Applied ${events.size} low-risk wiki drift fix(es): $summary."
     }
+
+    private fun refreshWikiEventName(event: com.adobe.clawdea.knowledge.drift.DriftEvent): String =
+        when (event) {
+            is com.adobe.clawdea.knowledge.drift.DriftEvent.CodeRename -> "CodeRename"
+            is com.adobe.clawdea.knowledge.drift.DriftEvent.ManifestStale -> "ManifestStale"
+            is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamIndexCleanup -> "DreamIndexCleanup"
+            is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamLinkNormalization -> "DreamLinkNormalization"
+            is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamSourceReferenceFix -> "DreamSourceReferenceFix"
+            is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamDuplicateConcept -> "DreamDuplicateConcept"
+            is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamStaleConcept -> "DreamStaleConcept"
+            is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamMissingConcept -> "DreamMissingConcept"
+        }
+
+    private fun refreshWikiEventTarget(event: com.adobe.clawdea.knowledge.drift.DriftEvent): String =
+        when (event) {
+            is com.adobe.clawdea.knowledge.drift.DriftEvent.CodeRename -> event.wikiPage.fileName.toString()
+            is com.adobe.clawdea.knowledge.drift.DriftEvent.ManifestStale -> event.repoKey
+            is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamIndexCleanup -> event.targetFile.fileName.toString()
+            is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamLinkNormalization -> event.targetFile.fileName.toString()
+            is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamSourceReferenceFix -> event.targetFile.fileName.toString()
+            is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamDuplicateConcept -> event.targetFile.fileName.toString()
+            is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamStaleConcept -> event.targetFile.fileName.toString()
+            is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamMissingConcept -> event.targetFile.fileName.toString()
+        }
 
     private fun buildRefreshWikiPrompt(events: List<com.adobe.clawdea.knowledge.drift.DriftEvent>): String {
         val sb = StringBuilder()
