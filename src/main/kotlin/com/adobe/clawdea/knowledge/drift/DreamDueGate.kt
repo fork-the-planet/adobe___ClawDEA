@@ -45,7 +45,9 @@ object DreamDueGate {
     }
 
     private fun scanThrottleElapsed(state: DriftState, now: Instant, scanThrottleMinutes: Int): Boolean {
-        return hasElapsed(state.dreamLastDueCheckAt, now, Duration.ofMinutes(scanThrottleMinutes.toLong()))
+        val threshold = Duration.ofMinutes(scanThrottleMinutes.toLong())
+        return hasElapsed(state.dreamLastDueCheckAt, now, threshold) &&
+            hasElapsed(state.dreamLastFailedScanAt, now, threshold)
     }
 
     private fun hasElapsed(timestamp: String, now: Instant, threshold: Duration): Boolean {
