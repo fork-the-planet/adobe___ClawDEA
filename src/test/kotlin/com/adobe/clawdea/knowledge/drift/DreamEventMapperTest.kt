@@ -12,7 +12,6 @@
 package com.adobe.clawdea.knowledge.drift
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.nio.file.Path
@@ -21,6 +20,7 @@ class DreamEventMapperTest {
 
     @Test fun `maps linkNormalization applyLowRisk to auto-applicable event`() {
         val projectRoot = Path.of("/repo")
+        val targetFile = projectRoot.resolve(".claude/wiki/index.md").normalize()
         val candidate = candidate(
             kind = DreamCandidateKind.LINK_NORMALIZATION,
             title = "Normalize rollout link",
@@ -38,13 +38,12 @@ class DreamEventMapperTest {
         assertEquals("Normalize rollout link", event.title)
         assertEquals("Replace one old wikilink.", event.patchPlan)
         assertTrue(event.autoApplicable)
-        assertTrue(event.signature.startsWith("dream-link-normalization:index.md:"))
-        assertFalse(event.signature.contains("/repo"))
-        assertFalse(event.signature.contains("Normalize rollout link"))
+        assertEquals("dream-link-normalization:$targetFile:Normalize rollout link", event.signature)
     }
 
     @Test fun `maps missingConcept to missing concept event`() {
         val projectRoot = Path.of("/repo")
+        val targetFile = projectRoot.resolve(".claude/wiki/concepts/rollout-flow.md").normalize()
         val candidate = candidate(
             kind = DreamCandidateKind.MISSING_CONCEPT,
             title = "Add rollout concept",
@@ -58,14 +57,12 @@ class DreamEventMapperTest {
 
         assertTrue(event is DriftEvent.DreamMissingConcept)
         event as DriftEvent.DreamMissingConcept
-        assertEquals(projectRoot.resolve(".claude/wiki/concepts/rollout-flow.md").normalize(), event.targetFile)
+        assertEquals(targetFile, event.targetFile)
         assertEquals("Add rollout concept", event.title)
-        assertTrue(event.signature.startsWith("dream-missing-concept:concepts/rollout-flow.md:"))
-        assertFalse(event.signature.contains("/repo"))
-        assertFalse(event.signature.contains("Add rollout concept"))
+        assertEquals("dream-missing-concept:$targetFile:Add rollout concept", event.signature)
     }
 
-    @Test fun `indexCleanup with applyLowRisk is not autoApplicable`() {
+    @Test fun `indexCleanup applyLowRisk high confidence is autoApplicable`() {
         val event = DreamEventMapper.toEvent(
             Path.of("/repo"),
             candidate(
@@ -80,42 +77,8 @@ class DreamEventMapperTest {
 
         assertTrue(event is DriftEvent.DreamIndexCleanup)
         event as DriftEvent.DreamIndexCleanup
-        assertFalse(event.autoApplicable)
-        assertTrue(event.signature.startsWith("dream-index-cleanup:index.md:"))
-        assertFalse(event.signature.contains("/repo"))
-        assertFalse(event.signature.contains("Tighten index"))
-    }
-
-    @Test fun `same target linkNormalization candidates with different evidence refs have different signatures`() {
-        val projectRoot = Path.of("/repo")
-        val first = DreamEventMapper.toEvent(
-            projectRoot,
-            candidate(
-                kind = DreamCandidateKind.LINK_NORMALIZATION,
-                title = "Normalize rollout link",
-                targetFiles = listOf(".claude/wiki/index.md"),
-                contextCost = DreamContextCost.NEUTRAL,
-                confidence = DreamConfidence.HIGH,
-                proposedAction = DreamProposedAction.APPLY_LOW_RISK,
-                evidence = listOf(DreamEvidence(DreamEvidenceType.STALE_LINK, ".claude/wiki/index.md#rollout", "old wikilink")),
-            ),
-        )
-        val second = DreamEventMapper.toEvent(
-            projectRoot,
-            candidate(
-                kind = DreamCandidateKind.LINK_NORMALIZATION,
-                title = "Normalize rollout link",
-                targetFiles = listOf(".claude/wiki/index.md"),
-                contextCost = DreamContextCost.NEUTRAL,
-                confidence = DreamConfidence.HIGH,
-                proposedAction = DreamProposedAction.APPLY_LOW_RISK,
-                evidence = listOf(DreamEvidence(DreamEvidenceType.STALE_LINK, ".claude/wiki/index.md#authoring", "old wikilink")),
-            ),
-        )
-
-        assertFalse(first.signature == second.signature)
-        assertTrue(first.signature.startsWith("dream-link-normalization:index.md:"))
-        assertTrue(second.signature.startsWith("dream-link-normalization:index.md:"))
+        assertTrue(event.autoApplicable)
+        assertEquals("dream-index-cleanup:/repo/.claude/wiki/index.md:Tighten index", event.signature)
     }
 
     private fun candidate(
