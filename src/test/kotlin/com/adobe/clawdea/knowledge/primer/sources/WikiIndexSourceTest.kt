@@ -19,8 +19,10 @@ class WikiIndexSourceTest {
     fun `directive asks for standard markdown wiki links`() {
         val directive = WikiIndexSource.buildDirective(".claude/wiki", autoUpdate = false)
 
-        assertTrue(directive.contains("Use standard Markdown links between wiki pages"))
-        assertTrue(directive.contains("do not create new `[[concept]]` references"))
+        assertTrue(directive.contains("Use standard Markdown links between wiki pages:"))
+        assertTrue(directive.contains("[Concept](concept.md)"))
+        assertTrue(directive.contains("[Concept](concepts/concept.md)"))
+        assertTrue(directive.contains("Do not create new `[[concept]]` references"))
     }
 
     @Test

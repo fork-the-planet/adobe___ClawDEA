@@ -78,7 +78,9 @@ class WikiIndexSource : PrimerSource {
                 |   line refs, control flow, gotchas. Skip page-creation only for one-file or
                 |   purely lexical tasks (rename, format, lint).
                 |
-                |   Use standard Markdown links between wiki pages; do not create new `[[concept]]` references.
+                |   Use standard Markdown links between wiki pages: from another concept page,
+                |   `[Concept](concept.md)`; from the index, `[Concept](concepts/concept.md)`.
+                |   Do not create new `[[concept]]` references.
                 |3. Mention any wiki gaps you observed in your final reply so the user knows
                 |   coverage improved (or where it still doesn't).
                 |
