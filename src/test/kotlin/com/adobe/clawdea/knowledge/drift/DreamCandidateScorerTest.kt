@@ -73,10 +73,89 @@ class DreamCandidateScorerTest {
         assertEquals(listOf(cleanup, linkFix, newPage), DreamCandidateScorer.filterAndRank(listOf(newPage, linkFix, cleanup)))
     }
 
+    @Test fun `orders all candidate kinds by maintenance priority`() {
+        val missingConcept = candidate(DreamCandidateKind.MISSING_CONCEPT)
+        val staleConcept = candidate(DreamCandidateKind.STALE_CONCEPT)
+        val duplicateConcept = candidate(DreamCandidateKind.DUPLICATE_CONCEPT)
+        val linkNormalization = candidate(DreamCandidateKind.LINK_NORMALIZATION)
+        val sourceReferenceFix = candidate(DreamCandidateKind.SOURCE_REFERENCE_FIX)
+        val indexCleanup = candidate(DreamCandidateKind.INDEX_CLEANUP)
+
+        assertEquals(
+            listOf(indexCleanup, sourceReferenceFix, linkNormalization, duplicateConcept, staleConcept, missingConcept),
+            DreamCandidateScorer.filterAndRank(listOf(
+                missingConcept,
+                staleConcept,
+                duplicateConcept,
+                linkNormalization,
+                sourceReferenceFix,
+                indexCleanup,
+            )),
+        )
+    }
+
+    @Test fun `orders context cost within otherwise equal candidates`() {
+        val adds = candidate(
+            kind = DreamCandidateKind.STALE_CONCEPT,
+            contextCost = DreamContextCost.ADDS_CONTEXT,
+            evidence = listOf(evidence("one"), evidence("two")),
+        )
+        val neutral = candidate(
+            kind = DreamCandidateKind.STALE_CONCEPT,
+            contextCost = DreamContextCost.NEUTRAL,
+        )
+        val shrinks = candidate(
+            kind = DreamCandidateKind.STALE_CONCEPT,
+            contextCost = DreamContextCost.SHRINKS_CONTEXT,
+        )
+
+        assertEquals(listOf(shrinks, neutral, adds), DreamCandidateScorer.filterAndRank(listOf(adds, neutral, shrinks)))
+    }
+
+    @Test fun `orders confidence within otherwise equal candidates`() {
+        val low = candidate(
+            kind = DreamCandidateKind.STALE_CONCEPT,
+            confidence = DreamConfidence.LOW,
+        )
+        val medium = candidate(
+            kind = DreamCandidateKind.STALE_CONCEPT,
+            confidence = DreamConfidence.MEDIUM,
+        )
+        val high = candidate(
+            kind = DreamCandidateKind.STALE_CONCEPT,
+            confidence = DreamConfidence.HIGH,
+        )
+
+        assertEquals(listOf(high, medium, low), DreamCandidateScorer.filterAndRank(listOf(low, medium, high)))
+    }
+
+    @Test fun `caps ranked candidates to requested maximum`() {
+        val low = candidate(
+            kind = DreamCandidateKind.STALE_CONCEPT,
+            confidence = DreamConfidence.LOW,
+        )
+        val medium = candidate(
+            kind = DreamCandidateKind.STALE_CONCEPT,
+            confidence = DreamConfidence.MEDIUM,
+        )
+        val high = candidate(
+            kind = DreamCandidateKind.STALE_CONCEPT,
+            confidence = DreamConfidence.HIGH,
+        )
+
+        assertEquals(listOf(high, medium), DreamCandidateScorer.filterAndRank(listOf(low, medium, high), maxCandidates = 2))
+    }
+
+    private fun candidate(kind: DreamCandidateKind): DreamCandidate = candidate(
+        kind = kind,
+        contextCost = DreamContextCost.NEUTRAL,
+        confidence = DreamConfidence.HIGH,
+    )
+
     private fun candidate(
         kind: DreamCandidateKind,
-        contextCost: DreamContextCost,
-        confidence: DreamConfidence,
+        contextCost: DreamContextCost = DreamContextCost.NEUTRAL,
+        confidence: DreamConfidence = DreamConfidence.HIGH,
         title: String = kind.name,
         evidence: List<DreamEvidence> = listOf(evidence("one")),
     ): DreamCandidate = DreamCandidate(
