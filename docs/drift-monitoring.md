@@ -32,7 +32,7 @@ IDE-local ClawDEA can use Claude Code Dreams as an opportunistic semantic detect
 
 Manual `/refresh-wiki --dream` bypasses elapsed, signal-count, and scan-throttle due gates, but still respects the Dream enable setting, filesystem lock, and active-turn safety.
 
-The Dream path never edits source files. When **Auto-update wiki on drift** is enabled, only deterministic low-risk wiki cleanup can auto-apply; substantive concept-page creation and rewrites continue through diff review.
+The Dream path never edits source files. When **Auto-update wiki on drift** is enabled, only low-risk wiki cleanup can auto-apply, such as high-confidence single-target Dream link normalization when the target concept exists. Substantive concept-page creation and rewrites continue through diff review.
 
 ---
 

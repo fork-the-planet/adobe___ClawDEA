@@ -232,7 +232,7 @@ The **primer** assembles `CLAUDE.md` + the auto-generated `.claude/REPO_STATE.md
 
 Concept pages live under `.claude/wiki/concepts/`. Each page names the files, classes, and entry points for a subsystem — Claude reads a concept page first to orient, then navigates directly instead of broad text search. Seed a fresh wiki with `/seed-wiki`, refresh auto-generated parts with `/refresh-wiki`, and audit for stale links with `/wiki-audit`. Capture a learning mid-session with `/learn`.
 
-Dream-backed wiki maintenance can detect low-signal index growth, stale/duplicate concept pages, and old wiki link syntax. Low-risk cleanup can apply automatically only when Auto-update wiki on drift is enabled; substantive page creation and rewrites still go through diff review.
+Dream-backed wiki maintenance can detect low-signal index growth, stale/duplicate concept pages, and old wiki link syntax. Low-risk cleanup, such as high-confidence single-target Dream link normalization when the target concept exists, can apply automatically only when Auto-update wiki on drift is enabled; substantive page creation and rewrites still go through diff review.
 
 ### Personal notes (`.claude/notes/CURRENT.md`)
 
