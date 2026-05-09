@@ -51,6 +51,21 @@ class WikiLinkTest {
         assertEquals(emptyList<String>(), links.map { it.targetSlug })
     }
 
+    @Test fun `ignores unsafe concept slugs`() {
+        val links = WikiLink.extractConceptLinks(
+            pageRelativePath = "index.md",
+            text = """
+                [[ ]]
+                [[nested/slug]]
+                [[nested\slug]]
+                [[../slug]]
+                [Traversal](concepts/bad..slug.md)
+            """.trimIndent(),
+        )
+
+        assertEquals(emptyList<String>(), links.map { it.targetSlug })
+    }
+
     @Test fun `normalizes index wikilink to markdown link`() {
         assertEquals(
             "[Rollout Flow](concepts/rollout-flow.md)",
@@ -62,6 +77,13 @@ class WikiLinkTest {
         assertEquals(
             "[Composite Cf](composite-cf.md)",
             WikiLink.toMarkdownLink(fromPage = "concepts/rollout-flow.md", targetSlug = "composite-cf"),
+        )
+    }
+
+    @Test fun `normalizes source wikilink to concept markdown link`() {
+        assertEquals(
+            "[Composite Cf](../concepts/composite-cf.md)",
+            WikiLink.toMarkdownLink(fromPage = "sources/runbook.md", targetSlug = "composite-cf"),
         )
     }
 }

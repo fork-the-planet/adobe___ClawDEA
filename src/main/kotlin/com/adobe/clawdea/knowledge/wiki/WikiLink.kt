@@ -23,7 +23,7 @@ object WikiLink {
     fun extractConceptLinks(pageRelativePath: String, text: String): List<WikiConceptLink> {
         val oldLinks = OLD_WIKILINK.findAll(text).mapNotNull { match ->
             val slug = match.groupValues[1].trim()
-            if (isValidOldWikiSlug(slug)) {
+            if (isValidConceptSlug(slug)) {
                 LinkMatch(match.range.first, WikiConceptLink(targetSlug = slug, original = match.value))
             } else {
                 null
@@ -50,7 +50,7 @@ object WikiLink {
         return "[${labelFor(targetSlug)}]($href)"
     }
 
-    private fun isValidOldWikiSlug(slug: String): Boolean =
+    private fun isValidConceptSlug(slug: String): Boolean =
         slug.isNotBlank() &&
             ".." !in slug &&
             "/" !in slug &&
@@ -67,7 +67,7 @@ object WikiLink {
         if (!resolved.startsWith("concepts/") || resolved.count { it == '/' } != 1) return null
 
         val slug = resolved.removePrefix("concepts/").removeSuffix(".md")
-        return slug.takeIf { it.isNotBlank() }
+        return slug.takeIf { isValidConceptSlug(it) }
     }
 
     private fun isExternalHref(href: String): Boolean =
