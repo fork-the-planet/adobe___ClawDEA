@@ -102,6 +102,7 @@ class DriftAutoApplierTest {
             title = "Normalize rollout link",
             patchPlan = "Replace one old wikilink.",
             autoApplicable = true,
+            signatureKey = "test-link-normalization",
         )
 
         val applied = DriftAutoApplier.apply(listOf(event), today = "2026-05-04")
@@ -124,6 +125,7 @@ class DriftAutoApplierTest {
             title = "Normalize rollout link",
             patchPlan = "Replace one old wikilink.",
             autoApplicable = true,
+            signatureKey = "test-link-normalization",
         )
 
         val applied = DriftAutoApplier.apply(listOf(event), today = "2026-05-04")
@@ -142,6 +144,7 @@ class DriftAutoApplierTest {
             targetFile = page,
             title = "Add rollout concept",
             patchPlan = "Create a new concept page.",
+            signatureKey = "test-missing-concept",
         )
 
         val applied = DriftAutoApplier.apply(listOf(event), today = "2026-05-04")
@@ -161,6 +164,7 @@ class DriftAutoApplierTest {
             title = "Normalize rollout links",
             patchPlan = "Replace old wikilinks.",
             autoApplicable = true,
+            signatureKey = "test-link-normalization",
         )
 
         val applied = DriftAutoApplier.apply(listOf(event), today = "2026-05-04")
@@ -180,6 +184,7 @@ class DriftAutoApplierTest {
             title = "Normalize rollout link",
             patchPlan = "Replace one old wikilink.",
             autoApplicable = false,
+            signatureKey = "test-link-normalization",
         )
 
         val applied = DriftAutoApplier.apply(listOf(event), today = "2026-05-04")

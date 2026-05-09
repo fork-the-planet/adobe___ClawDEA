@@ -43,8 +43,9 @@ sealed class DriftEvent {
         val title: String,
         val patchPlan: String,
         val autoApplicable: Boolean,
+        val signatureKey: String,
     ) : DriftEvent() {
-        override val signature: String = "dream-index-cleanup:$targetFile:$title"
+        override val signature: String = "dream-index-cleanup:$signatureKey"
     }
 
     data class DreamLinkNormalization(
@@ -52,8 +53,9 @@ sealed class DriftEvent {
         val title: String,
         val patchPlan: String,
         val autoApplicable: Boolean,
+        val signatureKey: String,
     ) : DriftEvent() {
-        override val signature: String = "dream-link-normalization:$targetFile:$title"
+        override val signature: String = "dream-link-normalization:$signatureKey"
     }
 
     data class DreamSourceReferenceFix(
@@ -61,31 +63,35 @@ sealed class DriftEvent {
         val title: String,
         val patchPlan: String,
         val autoApplicable: Boolean,
+        val signatureKey: String,
     ) : DriftEvent() {
-        override val signature: String = "dream-source-ref-fix:$targetFile:$title"
+        override val signature: String = "dream-source-ref-fix:$signatureKey"
     }
 
     data class DreamDuplicateConcept(
         val targetFile: Path,
         val title: String,
         val patchPlan: String,
+        val signatureKey: String,
     ) : DriftEvent() {
-        override val signature: String = "dream-duplicate-concept:$targetFile:$title"
+        override val signature: String = "dream-duplicate-concept:$signatureKey"
     }
 
     data class DreamStaleConcept(
         val targetFile: Path,
         val title: String,
         val patchPlan: String,
+        val signatureKey: String,
     ) : DriftEvent() {
-        override val signature: String = "dream-stale-concept:$targetFile:$title"
+        override val signature: String = "dream-stale-concept:$signatureKey"
     }
 
     data class DreamMissingConcept(
         val targetFile: Path,
         val title: String,
         val patchPlan: String,
+        val signatureKey: String,
     ) : DriftEvent() {
-        override val signature: String = "dream-missing-concept:$targetFile:$title"
+        override val signature: String = "dream-missing-concept:$signatureKey"
     }
 }
