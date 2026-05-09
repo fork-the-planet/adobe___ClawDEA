@@ -161,6 +161,15 @@ class DriftDetectionService(private val project: Project) {
                     successful = false,
                 )
             }
+            if (!settingsState.enableKnowledgeLayer || !settingsState.enableDreamWikiMaintenance) {
+                return DreamDetectionResult(
+                    events = emptyList(),
+                    status = "not-run:disabled",
+                    filteredCandidateCount = state.dreamFilteredCandidateCount,
+                    attempted = false,
+                    successful = false,
+                )
+            }
             val settings = DreamWikiSettings(
                 enabled = settingsState.enableKnowledgeLayer && settingsState.enableDreamWikiMaintenance,
                 minElapsedHours = settingsState.dreamWikiMinElapsedHours,

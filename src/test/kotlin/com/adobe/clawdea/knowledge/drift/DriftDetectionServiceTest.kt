@@ -188,6 +188,40 @@ class DriftDetectionServiceTest {
         assertEquals(2, result.newState.dreamProcessedSignalUnits)
     }
 
+    @Test fun `collectRaw explicit dream scan respects disabled dream maintenance setting`() {
+        val tmp = Files.createTempDirectory("svc-dream-disabled")
+        val now = Instant.parse("2026-05-09T12:34:56Z")
+        var invoked = false
+
+        val result = DriftDetectionService.collectRaw(
+            projectRoot = tmp,
+            claudeDir = tmp.resolve(".claude"),
+            beforeState = DriftState(
+                dreamProcessedSignalUnits = 2,
+                dreamObservedSignalUnits = 7,
+            ),
+            settingsState = ClawDEASettings.State().apply {
+                enableKnowledgeLayer = true
+                enableDreamWikiMaintenance = false
+            },
+            now = now,
+            runDreamScan = true,
+            detectDreams = { _, _, _, _, _, _ ->
+                invoked = true
+                DreamDetectionResult(emptyList(), "ok", 0, attempted = true, successful = true)
+            },
+        )
+
+        assertFalse(invoked)
+        assertEquals(emptyList<DriftEvent>(), result.events)
+        assertEquals("2026-05-09T12:34:56Z", result.newState.dreamLastDueCheckAt)
+        assertEquals("not-run:disabled", result.newState.dreamLastStatus)
+        assertEquals("", result.newState.dreamLastRunAt)
+        assertEquals("", result.newState.dreamLastSuccessfulScanAt)
+        assertEquals("", result.newState.dreamLastFailedScanAt)
+        assertEquals(2, result.newState.dreamProcessedSignalUnits)
+    }
+
     @Test fun `collectRaw explicit dream scan persists failed status timestamp`() {
         val tmp = Files.createTempDirectory("svc-dream-failed")
         val now = Instant.parse("2026-05-09T12:34:56Z")
