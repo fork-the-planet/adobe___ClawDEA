@@ -972,10 +972,10 @@ class ChatPanel(
             com.adobe.clawdea.knowledge.workspace.seed.SeedPromptBuilder.build(roots, suggested, suggestedDeps, existing)
         })
 
-        commandRegistry.register("/refresh-wiki", com.adobe.clawdea.commands.handlers.BridgeExpandingHandler(
+        commandRegistry.register("/refresh-wiki", LocalHandler(
             CommandInfo("/refresh-wiki", "Review and fix detected wiki drift events", CommandCategory.BRIDGE),
-        ) { rawArgs ->
-            refreshWiki(RefreshWikiArgs.parse(rawArgs))
+        ) { rawArgs, _ ->
+            handleRefreshWiki(rawArgs)
         })
 
         // Index query commands
@@ -1004,13 +1004,40 @@ class ChatPanel(
         commandRegistry.register("/wiki-audit", com.adobe.clawdea.commands.handlers.WikiAuditCommandHandler(project))
     }
 
-    private fun refreshWiki(args: RefreshWikiArgs): String {
+    private sealed class RefreshWikiResult {
+        data class Local(val message: String) : RefreshWikiResult()
+        data class ReviewPrompt(val prompt: String) : RefreshWikiResult()
+    }
+
+    private fun handleRefreshWiki(rawArgs: String) {
+        val args = RefreshWikiArgs.parse(rawArgs)
+        if (args.statusOnly) {
+            appendHtml(renderer.renderInfoMessage(refreshWikiStatus()))
+            return
+        }
         if (args.applyLowRisk && !ClawDEASettings.getInstance().state.autoUpdateWiki) {
-            return "Applying low-risk wiki drift fixes requires enabling Auto-update wiki on drift."
+            appendHtml(renderer.renderInfoMessage("Applying low-risk wiki drift fixes requires enabling Auto-update wiki on drift."))
+            return
+        }
+        if (turnController.isStreaming) {
+            queueExplicitPrompt(refreshWikiCommandText(rawArgs))
+            appendHtml(renderer.renderInfoMessage("Queued /refresh-wiki until the current Claude turn finishes."))
+            return
         }
 
-        if (args.statusOnly) {
-            return refreshWikiStatus()
+        appendHtml(renderer.renderInfoMessage("Refreshing wiki drift..."))
+        scope.launch {
+            val result = withContext(Dispatchers.IO) { refreshWiki(args) }
+            when (result) {
+                is RefreshWikiResult.Local -> appendHtml(renderer.renderInfoMessage(result.message))
+                is RefreshWikiResult.ReviewPrompt -> dispatchOrQueueRefreshPrompt(result.prompt)
+            }
+        }
+    }
+
+    private fun refreshWiki(args: RefreshWikiArgs): RefreshWikiResult {
+        if (args.applyLowRisk && !ClawDEASettings.getInstance().state.autoUpdateWiki) {
+            return RefreshWikiResult.Local("Applying low-risk wiki drift fixes requires enabling Auto-update wiki on drift.")
         }
 
         val service = project.getService(com.adobe.clawdea.knowledge.drift.DriftDetectionService::class.java)
@@ -1021,14 +1048,34 @@ class ChatPanel(
         }
 
         if (args.applyLowRisk) {
-            return formatAppliedWikiDrift(service.lastAppliedEvents())
+            return RefreshWikiResult.Local(formatAppliedWikiDrift(service.lastAppliedEvents()))
         }
 
         if (events.isEmpty()) {
-            return "(no drift events detected)"
+            return RefreshWikiResult.Local("(no drift events detected)")
         }
 
-        return buildRefreshWikiPrompt(events)
+        return RefreshWikiResult.ReviewPrompt(buildRefreshWikiPrompt(events))
+    }
+
+    private fun dispatchOrQueueRefreshPrompt(prompt: String) {
+        if (turnController.isStreaming) {
+            queueExplicitPrompt(prompt)
+            appendHtml(renderer.renderInfoMessage("Queued wiki drift review until the current Claude turn finishes."))
+            return
+        }
+        dispatchSendToBridge(prompt, renderInChat = false)
+    }
+
+    private fun queueExplicitPrompt(prompt: String): Boolean {
+        val queued = pendingPromptController.queueExplicit(prompt)
+        refreshPendingPromptStatus()
+        return queued
+    }
+
+    private fun refreshWikiCommandText(rawArgs: String): String {
+        val args = rawArgs.trim()
+        return if (args.isEmpty()) "/refresh-wiki" else "/refresh-wiki $args"
     }
 
     private fun refreshWikiStatus(): String {
@@ -1265,6 +1312,15 @@ class ChatPanel(
 
             val match = commandRegistry.resolve(text)
             val handler = match?.handler
+            if (handler?.info?.name == "/refresh-wiki") {
+                val refreshArgs = RefreshWikiArgs.parse(match.args)
+                val localOnly = refreshArgs.statusOnly ||
+                    (refreshArgs.applyLowRisk && !ClawDEASettings.getInstance().state.autoUpdateWiki)
+                if (!localOnly) {
+                    queueCurrentComposerText()
+                    return
+                }
+            }
             if (handler is BridgeForwardHandler ||
                 handler is com.adobe.clawdea.commands.handlers.BridgeExpandingHandler ||
                 handler is SkillHandler
@@ -1332,7 +1388,7 @@ class ChatPanel(
     }
 
     private fun refreshPendingPromptStatus() {
-        if (pendingPromptController.isQueued && inputArea.text.isBlank()) {
+        if (pendingPromptController.isQueued && inputArea.text.isBlank() && !pendingPromptController.hasExplicitPrompt) {
             pendingPromptController.clear()
         }
         if (pendingPromptController.isQueued) {

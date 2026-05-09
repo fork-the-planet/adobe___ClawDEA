@@ -18,28 +18,45 @@ package com.adobe.clawdea.chat
 class PendingPromptController {
     var isQueued: Boolean = false
         private set
+    private var explicitPrompt: String? = null
+
+    val hasExplicitPrompt: Boolean
+        get() = explicitPrompt != null
 
     fun queue(composerText: String): Boolean {
         if (composerText.isBlank()) {
             clear()
             return false
         }
+        explicitPrompt = null
+        isQueued = true
+        return true
+    }
+
+    fun queueExplicit(prompt: String): Boolean {
+        val trimmed = prompt.trim()
+        if (trimmed.isBlank()) return false
+        explicitPrompt = trimmed
         isQueued = true
         return true
     }
 
     fun consume(composerText: String): String? {
         if (!isQueued) return null
+        val queuedPrompt = explicitPrompt
         isQueued = false
+        explicitPrompt = null
+        if (queuedPrompt != null) return queuedPrompt
         return composerText.trim().ifBlank { null }
     }
 
     fun clear() {
         isQueued = false
+        explicitPrompt = null
     }
 
     fun statusText(composerText: String): String {
-        return if (isQueued && composerText.isNotBlank()) {
+        return if (isQueued && (composerText.isNotBlank() || explicitPrompt != null)) {
             "Queued next prompt - will send after this turn"
         } else {
             "Claude is thinking..."

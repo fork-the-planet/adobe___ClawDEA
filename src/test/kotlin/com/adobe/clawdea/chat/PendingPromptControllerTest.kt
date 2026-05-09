@@ -84,4 +84,28 @@ class PendingPromptControllerTest {
         assertFalse(controller.isQueued)
         assertNull(controller.consume("follow up"))
     }
+
+    @Test
+    fun `explicit queued prompt survives blank composer text`() {
+        val controller = PendingPromptController()
+
+        assertTrue(controller.queueExplicit("generated refresh prompt"))
+
+        assertTrue(controller.isQueued)
+        assertTrue(controller.hasExplicitPrompt)
+        assertEquals("Queued next prompt - will send after this turn", controller.statusText(""))
+        assertEquals("generated refresh prompt", controller.consume(""))
+        assertFalse(controller.isQueued)
+    }
+
+    @Test
+    fun `composer queue replaces explicit queued prompt`() {
+        val controller = PendingPromptController()
+        controller.queueExplicit("generated refresh prompt")
+
+        controller.queue("typed prompt")
+
+        assertFalse(controller.hasExplicitPrompt)
+        assertEquals("edited typed prompt", controller.consume("edited typed prompt"))
+    }
 }
