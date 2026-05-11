@@ -361,12 +361,12 @@ class EventStreamHandler(
     }
 
     companion object {
-        // First-byte latency from Anthropic/Bedrock can spike to ~70-80s when the
-        // primer system prompt is large (CLAUDE.md + wiki index + skills + workspace).
-        // Keep the watchdog conservative enough to absorb that without false-positives,
-        // while still catching genuine hangs within ~1.5 min.
-        internal const val TURN_START_STALL_TIMEOUT_MS = 90_000
-        internal const val TOOL_RESULT_STALL_TIMEOUT_MS = 90_000
+        // First-byte latency from Anthropic/Bedrock can spike to 2+ minutes when the
+        // system prompt is large (CLAUDE.md + wiki + skills + workspace + tool results).
+        // The LLM needs to process all prior context before emitting the next token.
+        // 180s absorbs slow API responses without false-positives.
+        internal const val TURN_START_STALL_TIMEOUT_MS = 180_000
+        internal const val TOOL_RESULT_STALL_TIMEOUT_MS = 180_000
 
         internal fun shouldRecoverTurnStartStall(
             isStreaming: Boolean,

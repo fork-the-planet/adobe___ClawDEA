@@ -3,6 +3,7 @@ package com.adobe.clawdea.profiling.mcp
 import com.adobe.clawdea.mcp.McpToolRouter
 import com.adobe.clawdea.profiling.analysis.*
 import com.adobe.clawdea.profiling.model.*
+import com.intellij.openapi.project.Project
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
@@ -30,7 +31,11 @@ class McpProfilingToolsTest {
         )
         analysisService.register("test-123", recording)
 
-        McpProfilingTools(analysisService).registerAll(router)
+        val project = java.lang.reflect.Proxy.newProxyInstance(
+            Project::class.java.classLoader,
+            arrayOf(Project::class.java),
+        ) { _, _, _ -> null } as Project
+        McpProfilingTools(project, analysisService).registerAll(router)
     }
 
     @Test
@@ -48,7 +53,7 @@ class McpProfilingToolsTest {
 
     @Test
     fun `profiling_analyze_cpu returns JSON with topFrames`() {
-        val result = router.dispatch("profiling_analyze_cpu", mapOf("recording_id" to "test-123"))
+        val result = router.dispatch("profiling_analyze_cpu", mapOf("recording_id" to "test-123", "top_n" to "50"))
         assertFalse(result.isError)
         assertTrue(result.text.contains("topFrames"))
         assertTrue(result.text.contains("com.App"))
@@ -57,7 +62,7 @@ class McpProfilingToolsTest {
 
     @Test
     fun `profiling_analyze_allocations returns JSON with topAllocators`() {
-        val result = router.dispatch("profiling_analyze_allocations", mapOf("recording_id" to "test-123"))
+        val result = router.dispatch("profiling_analyze_allocations", mapOf("recording_id" to "test-123", "top_n" to "50"))
         assertFalse(result.isError)
         assertTrue(result.text.contains("topAllocators"))
         assertTrue(result.text.contains("byte[]"))
@@ -65,14 +70,14 @@ class McpProfilingToolsTest {
 
     @Test
     fun `profiling_analyze_cpu errors on unknown recording_id`() {
-        val result = router.dispatch("profiling_analyze_cpu", mapOf("recording_id" to "nonexistent"))
+        val result = router.dispatch("profiling_analyze_cpu", mapOf("recording_id" to "nonexistent", "top_n" to "50"))
         assertTrue(result.isError)
         assertTrue(result.text.contains("not found"))
     }
 
     @Test
     fun `profiling_analyze_leaks errors on non-hprof recording`() {
-        val result = router.dispatch("profiling_analyze_leaks", mapOf("recording_id" to "test-123"))
+        val result = router.dispatch("profiling_analyze_leaks", mapOf("recording_id" to "test-123", "top_n" to "50"))
         assertTrue(result.isError)
         assertTrue(result.text.contains("hprof"))
     }
