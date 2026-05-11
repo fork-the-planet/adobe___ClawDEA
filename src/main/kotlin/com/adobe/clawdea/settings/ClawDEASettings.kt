@@ -121,6 +121,7 @@ class ClawDEASettings : PersistentStateComponent<ClawDEASettings.State> {
         var modelCatalogs: MutableMap<String, MutableList<ModelEntry>> = defaultModelCatalogsMap(),
         var selectedModels: MutableMap<String, String> = mutableMapOf(),
         var selectedEfforts: MutableMap<String, String> = mutableMapOf(),
+
         // Profiling
         var profilingSamplingIntervalMs: Int = 10,
         var profilingMaxRecordingMb: Int = 500,
@@ -249,6 +250,8 @@ class ClawDEASettings : PersistentStateComponent<ClawDEASettings.State> {
             state.selectedEfforts[workingDirectory] = effort
         }
     }
+
+
 
     /**
      * Resolves the model id to pass to the CLI via `--model` for [providerId]

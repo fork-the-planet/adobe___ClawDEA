@@ -18,6 +18,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.psi.*
 import com.intellij.psi.search.FilenameIndex
 import com.intellij.psi.search.GlobalSearchScope
+import com.intellij.psi.search.PsiShortNamesCache
 import com.intellij.psi.search.searches.ClassInheritorsSearch
 import com.intellij.psi.search.searches.ReferencesSearch
 
@@ -85,6 +86,16 @@ class McpIndexTools(private val project: Project) {
             ),
             required = listOf("pattern"),
             handler = ::findFiles,
+        )
+        router.register(
+            name = "find_symbol",
+            description = "Find definitions of a class, method, or field by name. Returns file path, line number, and surrounding code for each match. Use this as the FIRST tool when you know a symbol name but not its location — it resolves names to file+line so you can then use find_usages/find_callers.",
+            properties = listOf(
+                Triple("name", "string", "Symbol name to find (e.g. 'ChatPanel', 'syncStreamingUi', 'MAX_MATCHES'). Case-sensitive."),
+                Triple("kind", "string", "Optional filter: 'class', 'method', or 'field'. Default: searches all kinds."),
+            ),
+            required = listOf("name"),
+            handler = ::findSymbol,
         )
     }
 
@@ -291,6 +302,75 @@ class McpIndexTools(private val project: Project) {
         return McpToolRouter.ToolResult(results)
     }
 
+    private fun findSymbol(args: Map<String, String>): McpToolRouter.ToolResult {
+        val name = args["name"] ?: return McpToolRouter.ToolResult("Missing 'name' argument", isError = true)
+        val kind = args["kind"]?.lowercase()
+
+        if (DumbService.isDumb(project)) return dumbResult()
+
+        val results = runReadAction {
+            val scope = GlobalSearchScope.projectScope(project)
+            val cache = PsiShortNamesCache.getInstance(project)
+            val sb = StringBuilder()
+            var count = 0
+
+            if (kind == null || kind == "class") {
+                val classes = cache.getClassesByName(name, scope)
+                for (cls in classes) {
+                    if (count >= MAX_SYMBOL_RESULTS) break
+                    val file = cls.containingFile ?: continue
+                    val path = PsiUtils.getFilePath(file, project)
+                    val line = PsiUtils.getLineNumber(file, cls.textOffset)
+                    val context = PsiUtils.getSurroundingLines(file, cls.textOffset, 2)
+                    sb.appendLine("--- class $name ($path:$line) ---")
+                    sb.appendLine(context)
+                    sb.appendLine()
+                    count++
+                }
+            }
+
+            if (kind == null || kind == "method") {
+                val methods = cache.getMethodsByName(name, scope)
+                for (method in methods) {
+                    if (count >= MAX_SYMBOL_RESULTS) break
+                    val file = method.containingFile ?: continue
+                    val path = PsiUtils.getFilePath(file, project)
+                    val line = PsiUtils.getLineNumber(file, method.textOffset)
+                    val containing = (method.containingClass?.name ?: "")
+                    val context = PsiUtils.getSurroundingLines(file, method.textOffset, 2)
+                    sb.appendLine("--- method $containing.$name ($path:$line) ---")
+                    sb.appendLine(context)
+                    sb.appendLine()
+                    count++
+                }
+            }
+
+            if (kind == null || kind == "field") {
+                val fields = cache.getFieldsByName(name, scope)
+                for (field in fields) {
+                    if (count >= MAX_SYMBOL_RESULTS) break
+                    val file = field.containingFile ?: continue
+                    val path = PsiUtils.getFilePath(file, project)
+                    val line = PsiUtils.getLineNumber(file, field.textOffset)
+                    val containing = ((field as? PsiMember)?.containingClass?.name ?: "")
+                    val context = PsiUtils.getSurroundingLines(file, field.textOffset, 2)
+                    sb.appendLine("--- field $containing.$name ($path:$line) ---")
+                    sb.appendLine(context)
+                    sb.appendLine()
+                    count++
+                }
+            }
+
+            if (sb.isEmpty()) "No symbol found for '$name'" else sb.toString()
+        }
+
+        return McpToolRouter.ToolResult(results)
+    }
+
     private fun dumbResult() = McpToolRouter.ToolResult("Indexing in progress, try again shortly.", isError = true)
     private fun fileNotFound(file: String) = McpToolRouter.ToolResult("File not found: $file", isError = true)
+
+    companion object {
+        private const val MAX_SYMBOL_RESULTS = 10
+    }
 }

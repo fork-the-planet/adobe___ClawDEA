@@ -38,8 +38,8 @@ class McpSearchTextTool(private val project: Project) {
             description = "Search project source content for a literal substring (or regex). " +
                 "Returns up to $MAX_MATCHES matches with file path, line number, and the matching line. " +
                 "Respects project scope (excludes build/output dirs and binary files). " +
-                "Use this for literal strings (CLI flags, error messages, config keys, log lines) that " +
-                "have no PSI symbol — for class/method/field navigation, prefer find_files/find_usages/find_callers.",
+                "ONLY for literal strings (CLI flags, error messages, config keys, log lines) that are NOT code symbols. " +
+                "Do NOT use for class/method/field names — use find_symbol instead.",
             properties = listOf(
                 Triple("query", "string", "Substring to search for. Treated literally unless regex=\"true\". Minimum 2 characters."),
                 Triple("regex", "string", "Optional: \"true\" to interpret query as a Java regular expression. Default \"false\"."),
@@ -175,10 +175,10 @@ class McpSearchTextTool(private val project: Project) {
 
         internal fun symbolMisuseHint(query: String): String? {
             if (!SYMBOL_PATTERN.containsMatchIn(query.trim())) return null
-            return "[NOTE: This query looks like a code symbol. For symbol navigation, " +
-                "use find_usages (references), find_callers (call sites), find_implementations, " +
-                "or find_files (by filename) instead of search_text. " +
-                "search_text is for literal strings like error messages, config keys, or log lines.]"
+            return "[NOTE: This query looks like a code symbol. Use find_symbol(name=\"${query.trim()}\") " +
+                "instead — it resolves symbol names to definition locations using the IDE index. " +
+                "search_text is for literal strings like error messages, config keys, or log lines, " +
+                "NOT for finding classes, methods, or fields.]"
         }
     }
 }

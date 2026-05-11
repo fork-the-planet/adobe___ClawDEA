@@ -22,6 +22,7 @@ import com.adobe.clawdea.chat.permission.PermissionRequestHandler
 import com.adobe.clawdea.chat.permission.PermissionRequestRenderer
 import com.adobe.clawdea.cli.CliBridge
 import com.adobe.clawdea.gateway.ModelEntry
+import com.adobe.clawdea.mcp.McpServer
 import com.adobe.clawdea.settings.ClawDEASettings
 import com.adobe.clawdea.settings.ToolApprovalModeUi
 import com.adobe.clawdea.commands.*
@@ -605,11 +606,13 @@ class ChatPanel(
 
         // Left: tool-approval dropdown (quick access to Settings > Tool approval)
         val settings = ClawDEASettings.getInstance().state
+        val mcpServer = McpServer.getInstance(project)
         val leftPanel = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
             isOpaque = false
         }
         fun syncRendererAutoAccept() {
-            renderer.autoAcceptEdits = settings.autoAcceptEdits || ToolApprovalModeUi.isAllowAll(settings.toolApprovalMode)
+            val effective = mcpServer.activeAutoAcceptEdits || ToolApprovalModeUi.isAllowAll(mcpServer.activeToolApprovalMode)
+            renderer.autoAcceptEdits = effective
         }
         var activeApprovalKey = settings.toolApprovalMode
         val approvalCombo = ComboBox(ToolApprovalModeUi.comboBoxModel()).apply {
@@ -622,7 +625,7 @@ class ChatPanel(
                 val newKey = ToolApprovalModeUi.keyForIndex(selectedIndex)
                 if (!ToolApprovalModeUi.requiresCliRestart(previousKey, newKey)) return@addActionListener
                 activeApprovalKey = newKey
-                settings.toolApprovalMode = newKey
+                mcpServer.activeToolApprovalMode = newKey
                 syncRendererAutoAccept()
                 applyToolApprovalModeChange(ToolApprovalModeUi.labelForKey(newKey))
             }
@@ -632,7 +635,7 @@ class ChatPanel(
             isSelected = settings.autoAcceptEdits
             toolTipText = "Apply edits without showing the diff dialog. Every edit still leaves a clickable diff link in the chat so you can review and revert."
             addActionListener {
-                settings.autoAcceptEdits = isSelected
+                mcpServer.activeAutoAcceptEdits = isSelected
                 syncRendererAutoAccept()
             }
         }

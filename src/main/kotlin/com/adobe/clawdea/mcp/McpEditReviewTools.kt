@@ -14,7 +14,6 @@ package com.adobe.clawdea.mcp
 import com.adobe.clawdea.chat.editreview.EditDiffReviewer
 import com.adobe.clawdea.chat.editreview.EditOutcome
 import com.adobe.clawdea.chat.editreview.EditReviewOutcomes
-import com.adobe.clawdea.settings.ClawDEASettings
 import com.intellij.openapi.project.Project
 import java.io.File
 
@@ -164,8 +163,7 @@ class McpEditReviewTools(private val project: Project) {
         // to whether file edits should be reviewed before applying. Conflating
         // the two caused users with toolApprovalMode="allow-all" to have all
         // edits auto-applied even with autoAcceptEdits=false.
-        val settings = ClawDEASettings.getInstance().state
-        if (settings.autoAcceptEdits) {
+        if (McpServer.getInstance(project).activeAutoAcceptEdits) {
             log.info("reviewAndRespond: auto-accepting edit for $filePath")
             reviewer.applyContent(filePath, proposedContent)
             EditReviewOutcomes.put(filePath, "AUTO-ACCEPTED")

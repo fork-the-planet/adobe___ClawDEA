@@ -49,6 +49,12 @@ class McpServer(private val project: Project) : Disposable {
     var port: Int = 0
         private set
 
+    @Volatile
+    var activeAutoAcceptEdits: Boolean = ClawDEASettings.getInstance().state.autoAcceptEdits
+
+    @Volatile
+    var activeToolApprovalMode: String = ClawDEASettings.getInstance().state.toolApprovalMode
+
     init {
         registerTools()
         start()
@@ -67,7 +73,7 @@ class McpServer(private val project: Project) : Disposable {
         McpProfilingTools(project, AnalysisService()).registerAll(router)
         McpPermissionPromptTool(
             dispatcherSupplier = { PermissionDispatcherHolder.getInstance(project).get() },
-            toolApprovalModeSupplier = { ClawDEASettings.getInstance().state.toolApprovalMode },
+            toolApprovalModeSupplier = { activeToolApprovalMode },
             permissionPolicySupplier = {
                 project.basePath?.let { basePath ->
                     PermissionPolicy {
