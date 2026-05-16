@@ -101,7 +101,12 @@ class DriftDetectionService(private val project: Project) {
     fun dismiss(signature: String) {
         val basePath = project.basePath ?: return
         val claudeDir = Paths.get(basePath).resolve(".claude")
-        DriftStateStore.update(claudeDir) { it.copy(dismissed = it.dismissed + signature) }
+        DriftStateStore.update(claudeDir) { state ->
+            state.copy(
+                dismissed = state.dismissed + signature,
+                suggestions = state.suggestions.filterNot { it.signature == signature },
+            )
+        }
         rescan()
     }
 
@@ -165,6 +170,7 @@ class DriftDetectionService(private val project: Project) {
             if (manifestPath != null) {
                 out += ManifestStaleDetector.detect(manifestPath)
             }
+            out += beforeState.suggestions
 
             val dreamState = if (runDreamScan) {
                 beforeState

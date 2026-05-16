@@ -424,4 +424,56 @@ class DriftDetectionServiceTest {
         assertTrue(html.contains("wiki has 1 maintenance suggestion"))
         assertFalse(html.contains("stale ref"))
     }
+
+    @Test fun `collectRaw includes state suggestions in raw events`() {
+        val tmp = Files.createTempDirectory("drift-svc")
+        val claudeDir = tmp.resolve(".claude")
+        Files.createDirectories(claudeDir.resolve("wiki"))
+        val suggestion = DriftEvent.WikiSuggestion(
+            kind = SuggestionKind.missingConcept,
+            title = "Add concept for X",
+            rationale = "Real subsystem with no coverage.",
+            targetFiles = listOf(".claude/wiki/concepts/x.md"),
+            sourcePage = null,
+            recordedAt = "2026-05-16T16:30:00Z",
+        )
+        val beforeState = DriftState(suggestions = listOf(suggestion))
+        val settingsState = ClawDEASettings.State()
+
+        val result = DriftDetectionService.collectRaw(
+            projectRoot = tmp,
+            claudeDir = claudeDir,
+            beforeState = beforeState,
+            settingsState = settingsState,
+            now = Instant.parse("2026-05-16T17:00:00Z"),
+            runDreamScan = false,
+        )
+        assertTrue(result.events.any { it is DriftEvent.WikiSuggestion && it.signature == suggestion.signature })
+    }
+
+    @Test fun `dismiss-style update strips matching suggestion from persisted state`() {
+        val tmp = Files.createTempDirectory("drift-dismiss")
+        val sig = "wiki-suggestion:missingConcept:.claude/wiki/concepts/x.md"
+        val suggestion = DriftEvent.WikiSuggestion(
+            kind = SuggestionKind.missingConcept,
+            title = "title here",
+            rationale = "rationale text here.",
+            targetFiles = listOf(".claude/wiki/concepts/x.md"),
+            sourcePage = null,
+            recordedAt = "2026-05-16T16:30:00Z",
+        )
+        assertEquals(sig, suggestion.signature)
+        DriftStateStore.write(tmp, DriftState(suggestions = listOf(suggestion)))
+
+        // Mirror what DriftDetectionService.dismiss(...) does.
+        DriftStateStore.update(tmp) { state ->
+            state.copy(
+                dismissed = state.dismissed + sig,
+                suggestions = state.suggestions.filterNot { it.signature == sig },
+            )
+        }
+        val read = DriftStateStore.read(tmp)
+        assertTrue(sig in read.dismissed)
+        assertTrue(read.suggestions.isEmpty())
+    }
 }
