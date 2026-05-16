@@ -44,6 +44,7 @@ data class DriftState(
     val dreamFilteredCandidateCount: Int = 0,
     val dreamLockOwner: String = "",
     val dreamLockAcquiredAt: String = "",
+    val suggestions: List<DriftEvent.WikiSuggestion> = emptyList(),
 ) {
     companion object {
         const val MAX_PROBE_MISSES = 200

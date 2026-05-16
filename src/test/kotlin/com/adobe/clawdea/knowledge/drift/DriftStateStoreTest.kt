@@ -121,4 +121,48 @@ class DriftStateStoreTest {
         assertEquals("", state.dreamLockOwner)
         assertEquals("", state.dreamLockAcquiredAt)
     }
+
+    @Test fun `read returns empty suggestions when file is missing`() {
+        val tmp = Files.createTempDirectory("drift")
+        val state = DriftStateStore.read(claudeDir = tmp)
+        assertEquals(emptyList<DriftEvent.WikiSuggestion>(), state.suggestions)
+    }
+
+    @Test fun `read returns empty suggestions when v1 file has no suggestions field`() {
+        val tmp = Files.createTempDirectory("drift")
+        val wikiDir = Files.createDirectories(tmp.resolve("wiki"))
+        Files.writeString(
+            wikiDir.resolve(".drift-state.json"),
+            """{"lastScanAt":"2026-05-01T00:00:00Z","dismissed":["sig-a"]}""",
+        )
+        val state = DriftStateStore.read(claudeDir = tmp)
+        assertEquals(listOf("sig-a"), state.dismissed)
+        assertEquals(emptyList<DriftEvent.WikiSuggestion>(), state.suggestions)
+    }
+
+    @Test fun `write then read round-trips suggestions list`() {
+        val tmp = Files.createTempDirectory("drift")
+        val suggestion = DriftEvent.WikiSuggestion(
+            kind = SuggestionKind.missingConcept,
+            title = "Add concept for FilesystemRefreshCoordinator",
+            rationale = "Referenced from multiple subsystems; no page exists.",
+            targetFiles = listOf(
+                ".claude/wiki/concepts/filesystem-refresh-coordinator.md",
+                ".claude/wiki/index.md",
+            ),
+            sourcePage = null,
+            recordedAt = "2026-05-16T16:30:00Z",
+        )
+        DriftStateStore.write(
+            claudeDir = tmp,
+            state = DriftState(suggestions = listOf(suggestion)),
+        )
+        val state = DriftStateStore.read(claudeDir = tmp)
+        assertEquals(1, state.suggestions.size)
+        val read = state.suggestions[0]
+        assertEquals(SuggestionKind.missingConcept, read.kind)
+        assertEquals(suggestion.title, read.title)
+        assertEquals(suggestion.targetFiles, read.targetFiles)
+        assertEquals(suggestion.signature, read.signature)
+    }
 }
