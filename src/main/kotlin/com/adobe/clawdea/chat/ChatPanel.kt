@@ -1300,6 +1300,7 @@ class ChatPanel(
             is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamDuplicateConcept -> "DreamDuplicateConcept"
             is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamStaleConcept -> "DreamStaleConcept"
             is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamMissingConcept -> "DreamMissingConcept"
+            is com.adobe.clawdea.knowledge.drift.DriftEvent.WikiSuggestion -> "WikiSuggestion(${event.kind.name})"
         }
 
     private fun refreshWikiEventTarget(event: com.adobe.clawdea.knowledge.drift.DriftEvent): String =
@@ -1312,6 +1313,7 @@ class ChatPanel(
             is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamDuplicateConcept -> event.targetFile.fileName.toString()
             is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamStaleConcept -> event.targetFile.fileName.toString()
             is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamMissingConcept -> event.targetFile.fileName.toString()
+            is com.adobe.clawdea.knowledge.drift.DriftEvent.WikiSuggestion -> event.title
         }
 
     private fun buildRefreshWikiPrompt(events: List<com.adobe.clawdea.knowledge.drift.DriftEvent>): String {
@@ -1352,6 +1354,15 @@ class ChatPanel(
                 }
                 is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamMissingConcept -> {
                     appendDreamEvent(sb, "DreamMissingConcept", event.targetFile, event.title, "use `propose_write` to draft the missing concept page if it is still useful: ${event.patchPlan}")
+                }
+                is com.adobe.clawdea.knowledge.drift.DriftEvent.WikiSuggestion -> {
+                    sb.appendLine("- **WikiSuggestion (${event.kind.name})**: ${event.title}")
+                    sb.appendLine("  - rationale: ${event.rationale}")
+                    sb.appendLine("  - target files: ${event.targetFiles.joinToString(", ")}")
+                    if (event.sourcePage != null) {
+                        sb.appendLine("  - observed while reading: ${event.sourcePage}")
+                    }
+                    sb.appendLine("  - action: review the suggested change. If you agree, draft the wiki update via `propose_write` or `propose_edit`. If not, dismiss.")
                 }
             }
         }

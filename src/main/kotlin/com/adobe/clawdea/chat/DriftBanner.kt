@@ -72,6 +72,12 @@ class DriftBanner(
                 is DriftEvent.DreamMissingConcept -> {
                     "✓ applied Dream missing concept update: ${event.targetFile.fileName} · ${event.title}"
                 }
+                is DriftEvent.WikiSuggestion -> {
+                    // WikiSuggestion is never auto-applied in v1 — this branch
+                    // exists only for `when` exhaustivity and should not be
+                    // reachable in practice.
+                    "✓ wiki suggestion: ${event.title}"
+                }
             }
         }
     }
@@ -116,6 +122,7 @@ class DriftBanner(
             is DriftEvent.DreamMissingConcept,
             is DriftEvent.DreamSourceReferenceFix,
             is DriftEvent.DreamStaleConcept,
+            is DriftEvent.WikiSuggestion,
             -> true
             is DriftEvent.CodeRename,
             is DriftEvent.ManifestStale,

@@ -41,6 +41,7 @@ object DriftAutoApplier {
                 is DriftEvent.DreamDuplicateConcept,
                 is DriftEvent.DreamStaleConcept,
                 is DriftEvent.DreamMissingConcept,
+                is DriftEvent.WikiSuggestion,
                 -> false
             }
             if (ok) applied += event

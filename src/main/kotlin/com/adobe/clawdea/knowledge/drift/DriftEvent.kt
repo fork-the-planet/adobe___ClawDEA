@@ -94,4 +94,25 @@ sealed class DriftEvent {
     ) : DriftEvent() {
         override val signature: String = "dream-missing-concept:$signatureKey"
     }
+
+    data class WikiSuggestion(
+        val kind: SuggestionKind,
+        val title: String,
+        val rationale: String,
+        val targetFiles: List<String>,
+        val sourcePage: String?,
+        val recordedAt: String,
+    ) : DriftEvent() {
+        override val signature: String =
+            "wiki-suggestion:${kind.name}:${primaryTarget(targetFiles)}"
+
+        companion object {
+            internal fun primaryTarget(targetFiles: List<String>): String {
+                val nonIndex = targetFiles.firstOrNull { !it.endsWith("index.md") }
+                return nonIndex ?: targetFiles.firstOrNull() ?: ""
+            }
+        }
+    }
 }
+
+enum class SuggestionKind { missingConcept, staleConcept, incompleteConcept }
