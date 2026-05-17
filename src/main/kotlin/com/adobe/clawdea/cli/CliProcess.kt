@@ -121,11 +121,11 @@ class CliProcess(
 
             if (settings.enableWikiLibrarian) {
                 try {
-                    val agentsJson = com.adobe.clawdea.knowledge.wiki.WikiLibrarianAgentArg.buildJson()
+                    val agentsJson = com.adobe.clawdea.knowledge.wiki.WikiAgentsArg.buildJson()
                     command.addAll(listOf("--agents", agentsJson))
-                    log.info("Injected wiki-librarian subagent via --agents (${agentsJson.length} chars)")
+                    log.info("Injected wiki-librarian + wiki-author subagents via --agents (${agentsJson.length} chars)")
                 } catch (e: Throwable) {
-                    log.warn("Failed to build wiki-librarian --agents arg; skipping injection", e)
+                    log.warn("Failed to build wiki agents --agents arg; skipping injection", e)
                 }
             }
 

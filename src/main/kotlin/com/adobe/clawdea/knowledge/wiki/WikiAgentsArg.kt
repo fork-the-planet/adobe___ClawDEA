@@ -11,55 +11,76 @@
  */
 package com.adobe.clawdea.knowledge.wiki
 
-import com.google.gson.JsonObject
+import com.adobe.clawdea.knowledge.prompts.PromptResource
 import com.google.gson.JsonArray
+import com.google.gson.JsonObject
 
 /**
- * Reads the bundled `wiki-librarian` agent definition from the plugin
- * classpath and produces the JSON payload accepted by Claude Code's
- * `--agents <json>` CLI flag.
+ * Reads the bundled `wiki-librarian` and `wiki-author` agent definitions
+ * from the plugin classpath and produces the JSON payload accepted by
+ * Claude Code's `--agents <json>` CLI flag.
  *
- * Claude Code 2.1.x scans `~/.claude/agents/` and the plugin marketplace
- * dirs for subagents, but does **not** scan `<project>/.claude/agents/`.
- * `--agents` is the project-scoped injection path.
+ * The wiki-author body contains `{{wiki-page-invariant}}` and
+ * `{{wiki-page-navigation}}` placeholders that are substituted with the
+ * canonical templates from `/prompts/wiki-page-invariant.md` and
+ * `/prompts/wiki-page-navigation.md` so the subagent's output matches
+ * the pages produced by `/seed-wiki`.
  *
- * Frontmatter format (resource at `/agents/wiki-librarian.md`):
+ * Frontmatter format (resource at `/agents/<name>.md`):
  *   ---
  *   name: <id>
  *   description: <single line>
  *   tools: <csv of tool names>     # optional
  *   ---
  *   <prompt body>
- *
- * Multiline YAML scalars (`description: |`) are intentionally NOT supported
- * by the parser here — keep the resource flat to match the working format
- * observed in user-level agent files.
  */
-object WikiLibrarianAgentArg {
+object WikiAgentsArg {
 
-    private const val RESOURCE_PATH = "/agents/wiki-librarian.md"
+    private const val LIBRARIAN_PATH = "/agents/wiki-librarian.md"
+    private const val AUTHOR_PATH = "/agents/wiki-author.md"
 
-    /**
-     * Returns the JSON string for `--agents`, e.g.
-     * `{"wiki-librarian":{"description":"...","prompt":"...","tools":[...]}}`.
-     *
-     * Throws [IllegalStateException] when the resource is missing or
-     * malformed; callers should treat that as a packaging defect.
-     */
     fun buildJson(): String {
-        val raw = WikiLibrarianAgentArg::class.java.getResourceAsStream(RESOURCE_PATH)
-            ?: throw IllegalStateException("Plugin resource not found: $RESOURCE_PATH")
+        val root = JsonObject()
+        addAgentTo(root, LIBRARIAN_PATH)
+        addAgentTo(root, AUTHOR_PATH)
+        return root.toString()
+    }
+
+    fun buildAuthorOnlyJson(): String {
+        val root = JsonObject()
+        addAgentTo(root, AUTHOR_PATH)
+        return root.toString()
+    }
+
+    private fun addAgentTo(root: JsonObject, resourcePath: String) {
+        val raw = WikiAgentsArg::class.java.getResourceAsStream(resourcePath)
+            ?: throw IllegalStateException("Plugin resource not found: $resourcePath")
         val text = raw.bufferedReader().use { it.readText() }
         val parsed = parse(text)
+        val body = substituteTemplates(parsed.body)
         val inner = JsonObject().apply {
             addProperty("description", parsed.description)
-            addProperty("prompt", parsed.body)
+            addProperty("prompt", body)
             if (parsed.tools.isNotEmpty()) {
                 add("tools", JsonArray().apply { parsed.tools.forEach { add(it) } })
             }
         }
-        return JsonObject().apply { add(parsed.name, inner) }.toString()
+        root.add(parsed.name, inner)
     }
+
+    private val PLACEHOLDER_RX = Regex("""\{\{([a-z0-9-]+)\}\}""")
+
+    private fun substituteTemplates(body: String): String =
+        PLACEHOLDER_RX.replace(body) { match ->
+            val name = match.groupValues[1]
+            try {
+                PromptResource.load(name)
+            } catch (_: IllegalArgumentException) {
+                // Leave the placeholder untouched if the prompt resource is not found —
+                // this path means a packaging defect; tests catch it.
+                match.value
+            }
+        }
 
     internal data class Parsed(
         val name: String,
