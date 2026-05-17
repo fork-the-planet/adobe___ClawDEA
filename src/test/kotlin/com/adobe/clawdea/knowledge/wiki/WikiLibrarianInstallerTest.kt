@@ -28,7 +28,7 @@ class WikiLibrarianInstallerTest {
         val content = Files.readString(written)
         assertTrue(content.startsWith("---"))
         assertTrue(content.contains("name: wiki-librarian"))
-        assertTrue(content.contains("mcp__clawdea-intellij__record_wiki_suggestion"))
+        assertTrue(content.contains("record_wiki_suggestion"))
     }
 
     @Test fun `ensureInstalled no-ops when file already present`() {

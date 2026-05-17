@@ -119,6 +119,16 @@ class CliProcess(
 
             command.addAll(listOf("--mcp-config", tmpFile.absolutePath))
 
+            if (settings.enableWikiLibrarian) {
+                try {
+                    val agentsJson = com.adobe.clawdea.knowledge.wiki.WikiLibrarianAgentArg.buildJson()
+                    command.addAll(listOf("--agents", agentsJson))
+                    log.info("Injected wiki-librarian subagent via --agents (${agentsJson.length} chars)")
+                } catch (e: Throwable) {
+                    log.warn("Failed to build wiki-librarian --agents arg; skipping injection", e)
+                }
+            }
+
             val disallowed = buildDisallowedTools(mcpAvailable = true)
             if (disallowed != null) {
                 command.addAll(listOf("--disallowedTools", disallowed))
