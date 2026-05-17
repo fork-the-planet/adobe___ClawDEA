@@ -11,10 +11,85 @@
  */
 package com.adobe.clawdea.knowledge.drift
 
-// TODO(Task 9 / Task 12): the original tests in this file exercised the
-// Dream* DriftEvent variants and DreamWikiDetector orchestration paths.
-// Both are removed by the wiki maintenance redesign (the Dream variants
-// no longer exist; the service is rewired in a later task). The body is
-// stubbed so the rest of the test compilation succeeds during the
-// staged refactor. See docs/superpowers/plans/2026-05-17-wiki-maintenance-redesign.md.
-class DriftDetectionServiceTest
+import org.junit.Test
+
+class DriftDetectionServiceTest {
+
+    @Test
+    fun `applyAndDismiss with autoUpdate calls wiki-author for non-deterministic events`() = kotlinx.coroutines.runBlocking {
+        val invoker = StubInvoker(actedOnAll = true)
+        val events = listOf(
+            DriftEvent.CommitDrift(
+                wikiPage = java.nio.file.Paths.get(".claude/wiki/concepts/x.md"),
+                commitShas = listOf("abc"),
+                touchedPaths = listOf("src/main/kotlin/Foo.kt"),
+                firstObservedAt = "2026-05-17T16:30:00Z",
+            ),
+        )
+        val (remaining, applied) = DriftDetectionService.applyAndDismiss(
+            events = events,
+            autoUpdateEnabled = true,
+            beforeState = DriftState(),
+            today = "2026-05-17",
+            wikiAuthorInvoker = invoker,
+        )
+        org.junit.Assert.assertTrue(remaining.isEmpty())
+        org.junit.Assert.assertEquals(events, applied.events)
+        org.junit.Assert.assertEquals(events.map { it.signature }, applied.newState.dismissed)
+    }
+
+    @Test
+    fun `applyAndDismiss with autoUpdate skips wiki-author when only deterministic events`() = kotlinx.coroutines.runBlocking {
+        var invokerCalled = false
+        val invoker = StubInvoker { invokerCalled = true; emptySet() }
+        val events = listOf(
+            DriftEvent.CodeRename(
+                wikiPage = java.nio.file.Paths.get(".claude/wiki/concepts/x.md"),
+                brokenLink = "old",
+                suggestedReplacement = "new",
+            ),
+        )
+        DriftDetectionService.applyAndDismiss(
+            events = events,
+            autoUpdateEnabled = true,
+            beforeState = DriftState(),
+            today = "2026-05-17",
+            wikiAuthorInvoker = invoker,
+        )
+        org.junit.Assert.assertFalse("invoker should not be called when only deterministic events", invokerCalled)
+    }
+
+    @Test
+    fun `applyAndDismiss with autoUpdate off returns events untouched`() = kotlinx.coroutines.runBlocking {
+        val events = listOf(
+            DriftEvent.CommitDrift(
+                wikiPage = java.nio.file.Paths.get(".claude/wiki/concepts/x.md"),
+                commitShas = listOf("abc"),
+                touchedPaths = listOf("src/main/kotlin/Foo.kt"),
+                firstObservedAt = "2026-05-17T16:30:00Z",
+            ),
+        )
+        val (remaining, applied) = DriftDetectionService.applyAndDismiss(
+            events = events,
+            autoUpdateEnabled = false,
+            beforeState = DriftState(),
+            today = "2026-05-17",
+            wikiAuthorInvoker = StubInvoker(actedOnAll = false),
+        )
+        org.junit.Assert.assertEquals(events, remaining)
+        org.junit.Assert.assertTrue(applied.events.isEmpty())
+    }
+
+    private class StubInvoker(
+        private val actedOnAll: Boolean = false,
+        private val actedOnFn: ((List<DriftEvent>) -> Set<String>)? = null,
+    ) : WikiAuthorInvoker {
+        constructor(fn: (List<DriftEvent>) -> Set<String>) : this(actedOnFn = fn)
+        override suspend fun invoke(events: List<DriftEvent>): WikiAuthorInvoker.Result {
+            val acted = actedOnFn?.invoke(events)
+                ?: if (actedOnAll) events.map { it.signature }.toSet() else emptySet()
+            val skipped = events.map { it.signature }.toSet() - acted
+            return WikiAuthorInvoker.Result(acted, skipped, null)
+        }
+    }
+}

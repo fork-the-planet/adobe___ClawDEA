@@ -16,6 +16,7 @@ import com.adobe.clawdea.settings.ClawDEASettings
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
+import kotlinx.coroutines.runBlocking
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.time.Instant
@@ -28,8 +29,7 @@ class DriftDetectionService(private val project: Project) {
     private var lastApplied: List<DriftEvent> = emptyList()
     private val listeners = mutableListOf<(events: List<DriftEvent>, applied: List<DriftEvent>) -> Unit>()
 
-    /** Run detectors, filter dismissed, optionally auto-apply, store + notify. */
-    fun rescan(runDreamScan: Boolean = false): Pair<List<DriftEvent>, List<DriftEvent>> = synchronized(mutex) {
+    fun rescan(): Pair<List<DriftEvent>, List<DriftEvent>> = synchronized(mutex) {
         val basePath = project.basePath
         if (basePath == null) {
             lastEvents = emptyList()
@@ -40,18 +40,23 @@ class DriftDetectionService(private val project: Project) {
         val claudeDir = Paths.get(basePath).resolve(".claude")
         val state = DriftStateStore.read(claudeDir)
         val settings = ClawDEASettings.getInstance().state
-        val collection = collectRaw(
+        val now = Instant.now()
+        val raw = collectRaw(
+            project = project,
             projectRoot = Paths.get(basePath),
             claudeDir = claudeDir,
             beforeState = state,
             settingsState = settings,
-            now = Instant.now(),
-            runDreamScan = runDreamScan,
+            now = now,
         )
-        val filtered = filterDismissed(collection.events, collection.newState)
-        val (remaining, applied) = applyAndDismiss(filtered, settings.autoUpdateWiki, collection.newState, DriftAutoApplier.todayIso())
-        if (applied.newState != state) {
-            DriftStateStore.write(claudeDir, applied.newState)
+        val filtered = filterDismissed(raw, state)
+        val invoker = buildInvoker(basePath)
+        val (remaining, applied) = runBlocking {
+            applyAndDismiss(filtered, settings.autoUpdateWiki, state, DriftAutoApplier.todayIso(), invoker)
+        }
+        val newState = applied.newState.copy(lastScanAt = now.toString())
+        if (newState != state) {
+            DriftStateStore.write(claudeDir, newState)
         }
         lastEvents = remaining
         lastApplied = applied.events
@@ -59,21 +64,13 @@ class DriftDetectionService(private val project: Project) {
         return remaining to applied.events
     }
 
-    fun runDreamScanNow(): Pair<List<DriftEvent>, List<DriftEvent>> = rescan(runDreamScan = true)
-
     fun current(): List<DriftEvent> = synchronized(mutex) { lastEvents }
     fun lastAppliedEvents(): List<DriftEvent> = synchronized(mutex) { lastApplied }
 
     fun recordProbeMiss(query: String, pathTokens: List<String>, hits: Int, contextHash: String) {
         val basePath = project.basePath ?: return
         val claudeDir = Paths.get(basePath).resolve(".claude")
-        val miss = ProbeMiss(
-            query = query,
-            pathTokens = pathTokens,
-            hits = hits,
-            contextHash = contextHash,
-            recordedAt = Instant.now().toString(),
-        )
+        val miss = ProbeMiss(query, pathTokens, hits, contextHash, Instant.now().toString())
         DriftStateStore.update(claudeDir) { state ->
             val updated = state.probeMisses + miss
             state.copy(probeMisses = updated.takeLast(DriftState.MAX_PROBE_MISSES))
@@ -83,11 +80,7 @@ class DriftDetectionService(private val project: Project) {
     fun recordUserCorrection(correctionSummary: String, contextHash: String) {
         val basePath = project.basePath ?: return
         val claudeDir = Paths.get(basePath).resolve(".claude")
-        val correction = UserCorrectionRecord(
-            summary = correctionSummary.take(500),
-            contextHash = contextHash,
-            recordedAt = Instant.now().toString(),
-        )
+        val correction = UserCorrectionRecord(correctionSummary.take(500), contextHash, Instant.now().toString())
         DriftStateStore.update(claudeDir) { state ->
             val updated = state.userCorrections + correction
             state.copy(userCorrections = updated.takeLast(DriftState.MAX_USER_CORRECTIONS))
@@ -119,40 +112,27 @@ class DriftDetectionService(private val project: Project) {
         }
     }
 
+    private fun buildInvoker(basePath: String): WikiAuthorInvoker {
+        val cliPath = com.adobe.clawdea.cli.resolveClaudeCliPath(ClawDEASettings.getInstance().state.cliPath)
+        return DefaultWikiAuthorInvoker(
+            claudeCliPath = cliPath,
+            projectRoot = Paths.get(basePath),
+        )
+    }
+
     companion object {
         private val LOG = Logger.getInstance(DriftDetectionService::class.java)
 
-        internal data class RawCollection(val events: List<DriftEvent>, val newState: DriftState)
-
-        internal fun interface DreamDetectionRunner {
-            fun detect(
-                projectRoot: Path,
-                state: DriftState,
-                settings: DreamWikiSettings,
-                now: Instant,
-                force: Boolean,
-                activeTurn: Boolean,
-            ): DreamDetectionResult
-        }
+        data class ApplyResult(val events: List<DriftEvent>, val newState: DriftState)
 
         internal fun collectRaw(
+            project: Project,
             projectRoot: Path,
             claudeDir: Path,
             beforeState: DriftState,
             settingsState: ClawDEASettings.State,
             now: Instant,
-            runDreamScan: Boolean = false,
-            detectDreams: DreamDetectionRunner = DreamDetectionRunner { root, state, settings, instant, force, activeTurn ->
-                DreamWikiDetector().detect(
-                    projectRoot = root,
-                    state = state,
-                    settings = settings,
-                    now = instant,
-                    force = force,
-                    activeTurn = activeTurn,
-                )
-            },
-        ): RawCollection {
+        ): List<DriftEvent> {
             val out = mutableListOf<DriftEvent>()
             val wikiDir = claudeDir.resolve("wiki")
             out += CodeRenameDetector.detect(
@@ -166,21 +146,16 @@ class DriftDetectionService(private val project: Project) {
             if (manifestPath != null) {
                 out += ManifestStaleDetector.detect(manifestPath)
             }
+            if (settingsState.enableWikiLibrarian) {
+                out += CommitWikiDriftDetector.detect(
+                    project = project,
+                    wikiDir = wikiDir,
+                    lastScanAt = parseInstantOrNull(beforeState.lastScanAt),
+                    now = now,
+                )
+            }
             out += beforeState.suggestions
-
-            // Dream wiki maintenance is being removed (Task 12 of the wiki
-            // maintenance redesign). The dream-scan helpers that referenced
-            // state.dream* fields have been stripped; rescan only updates
-            // lastScanAt going forward.
-            return RawCollection(
-                events = out,
-                newState = beforeState.copy(lastScanAt = now.toString()),
-            )
-        }
-
-        internal fun isDreamFilesystemLockHeld(claudeDir: Path, now: Instant): Boolean {
-            // Stub: removed in Task 12 alongside the rest of the dream pipeline.
-            return false
+            return out
         }
 
         internal fun filterDismissed(raw: List<DriftEvent>, state: DriftState): List<DriftEvent> {
@@ -188,22 +163,41 @@ class DriftDetectionService(private val project: Project) {
             return raw.filterNot { it.signature in dismissed }
         }
 
-        data class ApplyResult(val events: List<DriftEvent>, val newState: DriftState)
-
-        internal fun applyAndDismiss(
+        suspend fun applyAndDismiss(
             events: List<DriftEvent>,
             autoUpdateEnabled: Boolean,
             beforeState: DriftState,
             today: String,
+            wikiAuthorInvoker: WikiAuthorInvoker,
         ): Pair<List<DriftEvent>, ApplyResult> {
-            if (!autoUpdateEnabled) return events to ApplyResult(emptyList(), beforeState)
-            val applied = DriftAutoApplier.apply(events, today)
-            val remaining = events.filterNot { it in applied }
+            if (!autoUpdateEnabled || events.isEmpty()) {
+                return events to ApplyResult(emptyList(), beforeState)
+            }
+            // Step 1: deterministic auto-apply (CodeRename + ManifestStale) — fast path.
+            val deterministicApplied = DriftAutoApplier.apply(events, today)
+            val afterDeterministic = events - deterministicApplied.toSet()
+
+            // Step 2: route remainder through wiki-author.
+            val needsAuthor = afterDeterministic.filter {
+                it is DriftEvent.CommitDrift || it is DriftEvent.WikiSuggestion ||
+                    (it is DriftEvent.CodeRename && it.suggestedReplacement == null) ||
+                    (it is DriftEvent.ManifestStale)  // edge case: deterministic apply failed
+            }
+            val authoredAcked = if (needsAuthor.isNotEmpty()) {
+                wikiAuthorInvoker.invoke(needsAuthor).actedOnSignatures
+            } else emptySet()
+            val authoredApplied = needsAuthor.filter { it.signature in authoredAcked }
+
+            val applied = deterministicApplied + authoredApplied
+            val remaining = events - applied.toSet()
             val newState = beforeState.copy(
                 dismissed = beforeState.dismissed + applied.map { it.signature },
             )
             return remaining to ApplyResult(applied, newState)
         }
 
+        private fun parseInstantOrNull(text: String): Instant? = try {
+            if (text.isBlank()) null else Instant.parse(text)
+        } catch (_: Exception) { null }
     }
 }
