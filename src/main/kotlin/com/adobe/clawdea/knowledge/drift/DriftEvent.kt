@@ -38,61 +38,19 @@ sealed class DriftEvent {
         override val signature: String = "manifest-stale:$manifestPath:$repoKey"
     }
 
-    data class DreamIndexCleanup(
-        val targetFile: Path,
-        val title: String,
-        val patchPlan: String,
-        val autoApplicable: Boolean,
-        val signatureKey: String,
+    /**
+     * Emitted by [CommitWikiDriftDetector] when commits since `lastScanAt`
+     * touched files that a wiki concept page mentions. Whether the page is
+     * actually stale is decided by the wiki-author subagent.
+     */
+    data class CommitDrift(
+        val wikiPage: Path,
+        val commitShas: List<String>,
+        val touchedPaths: List<String>,
+        val firstObservedAt: String,
     ) : DriftEvent() {
-        override val signature: String = "dream-index-cleanup:$signatureKey"
-    }
-
-    data class DreamLinkNormalization(
-        val targetFile: Path,
-        val title: String,
-        val patchPlan: String,
-        val autoApplicable: Boolean,
-        val signatureKey: String,
-    ) : DriftEvent() {
-        override val signature: String = "dream-link-normalization:$signatureKey"
-    }
-
-    data class DreamSourceReferenceFix(
-        val targetFile: Path,
-        val title: String,
-        val patchPlan: String,
-        val autoApplicable: Boolean,
-        val signatureKey: String,
-    ) : DriftEvent() {
-        override val signature: String = "dream-source-ref-fix:$signatureKey"
-    }
-
-    data class DreamDuplicateConcept(
-        val targetFile: Path,
-        val title: String,
-        val patchPlan: String,
-        val signatureKey: String,
-    ) : DriftEvent() {
-        override val signature: String = "dream-duplicate-concept:$signatureKey"
-    }
-
-    data class DreamStaleConcept(
-        val targetFile: Path,
-        val title: String,
-        val patchPlan: String,
-        val signatureKey: String,
-    ) : DriftEvent() {
-        override val signature: String = "dream-stale-concept:$signatureKey"
-    }
-
-    data class DreamMissingConcept(
-        val targetFile: Path,
-        val title: String,
-        val patchPlan: String,
-        val signatureKey: String,
-    ) : DriftEvent() {
-        override val signature: String = "dream-missing-concept:$signatureKey"
+        override val signature: String =
+            "commit-drift:${wikiPage.fileName}:${commitShas.joinToString(",").take(80)}"
     }
 
     data class WikiSuggestion(

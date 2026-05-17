@@ -92,130 +92,6 @@ class DriftAutoApplierTest {
         assertEquals(firstResult, Files.readString(page))
     }
 
-    @Test fun `auto-applies one old wiki link normalization`() {
-        val tmp = Files.createTempDirectory("auto")
-        val index = tmp.resolve(".claude/wiki/index.md")
-        val targetConcept = tmp.resolve(".claude/wiki/concepts/rollout-flow.md")
-        Files.createDirectories(index.parent)
-        Files.createDirectories(targetConcept.parent)
-        Files.writeString(index, "See [[rollout-flow]]")
-        Files.writeString(targetConcept, "# Rollout Flow")
-        val event = DriftEvent.DreamLinkNormalization(
-            targetFile = index,
-            title = "Normalize rollout link",
-            patchPlan = "Replace one old wikilink.",
-            autoApplicable = true,
-            signatureKey = "test-link-normalization",
-        )
-
-        val applied = DriftAutoApplier.apply(listOf(event), today = "2026-05-04")
-
-        assertEquals(listOf(event), applied)
-        assertEquals("See [Rollout Flow](concepts/rollout-flow.md)", Files.readString(index))
-    }
-
-    @Test fun `does not auto-apply link normalization when target concept is missing`() {
-        val tmp = Files.createTempDirectory("auto")
-        val index = tmp.resolve(".claude/wiki/index.md")
-        Files.createDirectories(index.parent)
-        val original = "See [[rollout-flow]]"
-        Files.writeString(index, original)
-        val event = DriftEvent.DreamLinkNormalization(
-            targetFile = index,
-            title = "Normalize rollout link",
-            patchPlan = "Replace one old wikilink.",
-            autoApplicable = true,
-            signatureKey = "test-link-normalization",
-        )
-
-        val applied = DriftAutoApplier.apply(listOf(event), today = "2026-05-04")
-
-        assertEquals(emptyList<DriftEvent>(), applied)
-        assertEquals(original, Files.readString(index))
-    }
-
-    @Test fun `does not auto-apply link normalization outside wiki boundary`() {
-        val tmp = Files.createTempDirectory("auto")
-        val page = tmp.resolve("notes/page.md")
-        val targetConcept = tmp.resolve("notes/concepts/rollout-flow.md")
-        Files.createDirectories(page.parent)
-        Files.createDirectories(targetConcept.parent)
-        val original = "See [[rollout-flow]]"
-        Files.writeString(page, original)
-        Files.writeString(targetConcept, "# Rollout Flow")
-        val event = DriftEvent.DreamLinkNormalization(
-            targetFile = page,
-            title = "Normalize rollout link",
-            patchPlan = "Replace one old wikilink.",
-            autoApplicable = true,
-            signatureKey = "test-link-normalization",
-        )
-
-        val applied = DriftAutoApplier.apply(listOf(event), today = "2026-05-04")
-
-        assertEquals(emptyList<DriftEvent>(), applied)
-        assertEquals(original, Files.readString(page))
-    }
-
-    @Test fun `does not auto-apply substantive dream missing concept`() {
-        val tmp = Files.createTempDirectory("auto")
-        val page = tmp.resolve(".claude/wiki/concepts/rollout-flow.md")
-        Files.createDirectories(page.parent)
-        val original = "# Rollout Flow"
-        Files.writeString(page, original)
-        val event = DriftEvent.DreamMissingConcept(
-            targetFile = page,
-            title = "Add rollout concept",
-            patchPlan = "Create a new concept page.",
-            signatureKey = "test-missing-concept",
-        )
-
-        val applied = DriftAutoApplier.apply(listOf(event), today = "2026-05-04")
-
-        assertEquals(emptyList<DriftEvent>(), applied)
-        assertEquals(original, Files.readString(page))
-    }
-
-    @Test fun `does not auto-apply link normalization with multiple old links`() {
-        val tmp = Files.createTempDirectory("auto")
-        val index = tmp.resolve(".claude/wiki/index.md")
-        Files.createDirectories(index.parent)
-        val original = "See [[rollout-flow]] and [[composite-cf]]"
-        Files.writeString(index, original)
-        val event = DriftEvent.DreamLinkNormalization(
-            targetFile = index,
-            title = "Normalize rollout links",
-            patchPlan = "Replace old wikilinks.",
-            autoApplicable = true,
-            signatureKey = "test-link-normalization",
-        )
-
-        val applied = DriftAutoApplier.apply(listOf(event), today = "2026-05-04")
-
-        assertEquals(emptyList<DriftEvent>(), applied)
-        assertEquals(original, Files.readString(index))
-    }
-
-    @Test fun `does not auto-apply link normalization when autoApplicable is false`() {
-        val tmp = Files.createTempDirectory("auto")
-        val index = tmp.resolve(".claude/wiki/index.md")
-        Files.createDirectories(index.parent)
-        val original = "See [[rollout-flow]]"
-        Files.writeString(index, original)
-        val event = DriftEvent.DreamLinkNormalization(
-            targetFile = index,
-            title = "Normalize rollout link",
-            patchPlan = "Replace one old wikilink.",
-            autoApplicable = false,
-            signatureKey = "test-link-normalization",
-        )
-
-        val applied = DriftAutoApplier.apply(listOf(event), today = "2026-05-04")
-
-        assertEquals(emptyList<DriftEvent>(), applied)
-        assertEquals(original, Files.readString(index))
-    }
-
     @Test fun `apply never auto-applies WikiSuggestion`() {
         val event = DriftEvent.WikiSuggestion(
             kind = SuggestionKind.missingConcept,
@@ -224,6 +100,17 @@ class DriftAutoApplierTest {
             targetFiles = listOf(".claude/wiki/concepts/foo.md"),
             sourcePage = null,
             recordedAt = "2026-05-16T16:30:00Z",
+        )
+        val applied = DriftAutoApplier.apply(events = listOf(event))
+        assertTrue(applied.isEmpty())
+    }
+
+    @Test fun `apply never auto-applies CommitDrift`() {
+        val event = DriftEvent.CommitDrift(
+            wikiPage = java.nio.file.Paths.get(".claude/wiki/concepts/foo.md"),
+            commitShas = listOf("abc123"),
+            touchedPaths = listOf("src/main/kotlin/Foo.kt"),
+            firstObservedAt = "2026-05-17T16:30:00Z",
         )
         val applied = DriftAutoApplier.apply(events = listOf(event))
         assertTrue(applied.isEmpty())

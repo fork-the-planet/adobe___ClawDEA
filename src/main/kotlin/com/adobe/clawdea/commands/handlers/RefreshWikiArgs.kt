@@ -12,7 +12,6 @@
 package com.adobe.clawdea.commands.handlers
 
 data class RefreshWikiArgs(
-    val forceDream: Boolean = false,
     val statusOnly: Boolean = false,
     val applyLowRisk: Boolean = false,
 ) {
@@ -20,7 +19,6 @@ data class RefreshWikiArgs(
         fun parse(raw: String): RefreshWikiArgs {
             val flags = raw.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }.toSet()
             return RefreshWikiArgs(
-                forceDream = "--dream" in flags,
                 statusOnly = "--status" in flags,
                 applyLowRisk = "--apply-low-risk" in flags,
             )
@@ -30,15 +28,7 @@ data class RefreshWikiArgs(
 
 data class RefreshWikiStatus(
     val lastRunAt: String,
-    val lastSuccessfulScanAt: String,
-    val lastStatus: String,
-    val filteredCandidateCount: Int,
     val pendingEventTypes: List<String>,
-    val dreamGateDue: Boolean,
-    val dreamGateReasons: List<String>,
-    val observedSignalUnits: Int,
-    val processedSignalUnits: Int,
-    val minSignalUnits: Int,
 )
 
 object RefreshWikiStatusFormatter {
@@ -53,18 +43,8 @@ object RefreshWikiStatusFormatter {
                 .sortedBy { it.key }
                 .joinToString(", ") { "${it.key}=${it.value}" }
         }
-        val gateSummary = if (status.dreamGateDue) {
-            "due"
-        } else {
-            "not due (${status.dreamGateReasons.ifEmpty { listOf("unknown") }.joinToString(",")})"
-        }
-        return "Dream wiki status: last run ${valueOrNever(status.lastRunAt)}; " +
-            "last successful scan ${valueOrNever(status.lastSuccessfulScanAt)}; " +
-            "last status ${status.lastStatus.ifBlank { "none" }}; " +
-            "filtered candidates ${status.filteredCandidateCount}; " +
-            "pending drift ${status.pendingEventTypes.size} ($pendingSummary); " +
-            "gate $gateSummary; " +
-            "signal ${status.observedSignalUnits - status.processedSignalUnits}/${status.minSignalUnits}."
+        return "Wiki drift status: last run ${valueOrNever(status.lastRunAt)}; " +
+            "pending drift ${status.pendingEventTypes.size} ($pendingSummary)."
     }
 
     private fun valueOrNever(value: String): String = value.ifBlank { "never" }

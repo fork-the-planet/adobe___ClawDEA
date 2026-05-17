@@ -54,23 +54,10 @@ class DriftBanner(
                 is DriftEvent.ManifestStale -> {
                     "✓ commented out stale manifest entry: ${event.repoKey} (path missing)"
                 }
-                is DriftEvent.DreamLinkNormalization -> {
-                    "✓ normalized wiki link: ${event.targetFile.fileName} · ${event.title}"
-                }
-                is DriftEvent.DreamIndexCleanup -> {
-                    "✓ applied Dream index cleanup: ${event.targetFile.fileName} · ${event.title}"
-                }
-                is DriftEvent.DreamSourceReferenceFix -> {
-                    "✓ applied Dream source reference fix: ${event.targetFile.fileName} · ${event.title}"
-                }
-                is DriftEvent.DreamDuplicateConcept -> {
-                    "✓ applied Dream duplicate concept update: ${event.targetFile.fileName} · ${event.title}"
-                }
-                is DriftEvent.DreamStaleConcept -> {
-                    "✓ applied Dream stale concept update: ${event.targetFile.fileName} · ${event.title}"
-                }
-                is DriftEvent.DreamMissingConcept -> {
-                    "✓ applied Dream missing concept update: ${event.targetFile.fileName} · ${event.title}"
+                is DriftEvent.CommitDrift -> {
+                    // CommitDrift is never auto-applied — wiki-author handles it.
+                    // This branch exists only for `when` exhaustivity.
+                    "✓ commit drift: ${event.wikiPage.fileName}"
                 }
                 is DriftEvent.WikiSuggestion -> {
                     // WikiSuggestion is never auto-applied in v1 — this branch
@@ -116,12 +103,7 @@ class DriftBanner(
 
     private fun DriftEvent.isDreamEvent(): Boolean =
         when (this) {
-            is DriftEvent.DreamDuplicateConcept,
-            is DriftEvent.DreamIndexCleanup,
-            is DriftEvent.DreamLinkNormalization,
-            is DriftEvent.DreamMissingConcept,
-            is DriftEvent.DreamSourceReferenceFix,
-            is DriftEvent.DreamStaleConcept,
+            is DriftEvent.CommitDrift,
             is DriftEvent.WikiSuggestion,
             -> true
             is DriftEvent.CodeRename,

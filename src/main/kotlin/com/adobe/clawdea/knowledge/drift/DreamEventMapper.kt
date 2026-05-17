@@ -16,51 +16,10 @@ import java.nio.file.Path
 object DreamEventMapper {
 
     fun toEvent(projectRoot: Path, candidate: DreamCandidate): DriftEvent {
-        val targetFile = projectRoot.resolve(candidate.targetFiles.first()).normalize()
-        val autoApplicable = isAutoApplicable(candidate)
-        val signatureKey = signatureKey(candidate)
-
-        return when (candidate.kind) {
-            DreamCandidateKind.INDEX_CLEANUP -> DriftEvent.DreamIndexCleanup(
-                targetFile = targetFile,
-                title = candidate.title,
-                patchPlan = candidate.patchPlan,
-                autoApplicable = autoApplicable,
-                signatureKey = signatureKey,
-            )
-            DreamCandidateKind.LINK_NORMALIZATION -> DriftEvent.DreamLinkNormalization(
-                targetFile = targetFile,
-                title = candidate.title,
-                patchPlan = candidate.patchPlan,
-                autoApplicable = autoApplicable,
-                signatureKey = signatureKey,
-            )
-            DreamCandidateKind.SOURCE_REFERENCE_FIX -> DriftEvent.DreamSourceReferenceFix(
-                targetFile = targetFile,
-                title = candidate.title,
-                patchPlan = candidate.patchPlan,
-                autoApplicable = autoApplicable,
-                signatureKey = signatureKey,
-            )
-            DreamCandidateKind.DUPLICATE_CONCEPT -> DriftEvent.DreamDuplicateConcept(
-                targetFile = targetFile,
-                title = candidate.title,
-                patchPlan = candidate.patchPlan,
-                signatureKey = signatureKey,
-            )
-            DreamCandidateKind.STALE_CONCEPT -> DriftEvent.DreamStaleConcept(
-                targetFile = targetFile,
-                title = candidate.title,
-                patchPlan = candidate.patchPlan,
-                signatureKey = signatureKey,
-            )
-            DreamCandidateKind.MISSING_CONCEPT -> DriftEvent.DreamMissingConcept(
-                targetFile = targetFile,
-                title = candidate.title,
-                patchPlan = candidate.patchPlan,
-                signatureKey = signatureKey,
-            )
-        }
+        // TODO(Task 12): this file is scheduled for deletion. The body is
+        // stubbed because the Dream* DriftEvent variants no longer exist;
+        // callers will be removed alongside the file.
+        throw UnsupportedOperationException("DreamEventMapper is deprecated; pending removal in Task 12.")
     }
 
     private fun isAutoApplicable(candidate: DreamCandidate): Boolean =

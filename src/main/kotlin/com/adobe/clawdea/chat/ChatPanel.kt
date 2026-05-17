@@ -1211,11 +1211,7 @@ class ChatPanel(
         }
 
         val service = project.getService(com.adobe.clawdea.knowledge.drift.DriftDetectionService::class.java)
-        val (events, _) = if (args.forceDream) {
-            service.runDreamScanNow()
-        } else {
-            service.rescan()
-        }
+        val (events, _) = service.rescan()
 
         if (args.applyLowRisk) {
             return RefreshWikiResult.Local(formatAppliedWikiDrift(service.lastAppliedEvents()))
@@ -1249,35 +1245,14 @@ class ChatPanel(
     }
 
     private fun refreshWikiStatus(): String {
-        val basePath = project.basePath ?: return "Dream wiki status: project path unavailable."
+        val basePath = project.basePath ?: return "Wiki drift status: project path unavailable."
         val claudeDir = java.nio.file.Paths.get(basePath).resolve(".claude")
         val state = com.adobe.clawdea.knowledge.drift.DriftStateStore.read(claudeDir)
-        val settings = ClawDEASettings.getInstance().state
-        val now = java.time.Instant.now()
-        val decision = com.adobe.clawdea.knowledge.drift.DreamDueGate.evaluate(
-            enabled = settings.enableKnowledgeLayer && settings.enableDreamWikiMaintenance,
-            now = now,
-            state = state,
-            minElapsedHours = settings.dreamWikiMinElapsedHours,
-            minSignalUnits = settings.dreamWikiMinSignalUnits,
-            scanThrottleMinutes = settings.dreamWikiScanThrottleMinutes,
-            activeTurn = false,
-            lockHeld = state.dreamLockOwner.isNotBlank() ||
-                com.adobe.clawdea.knowledge.drift.DriftDetectionService.isDreamFilesystemLockHeld(claudeDir, now),
-        )
         val service = project.getService(com.adobe.clawdea.knowledge.drift.DriftDetectionService::class.java)
         return RefreshWikiStatusFormatter.format(
             RefreshWikiStatus(
                 lastRunAt = state.dreamLastRunAt,
-                lastSuccessfulScanAt = state.dreamLastSuccessfulScanAt,
-                lastStatus = state.dreamLastStatus,
-                filteredCandidateCount = state.dreamFilteredCandidateCount,
                 pendingEventTypes = service.current().map { refreshWikiEventName(it) },
-                dreamGateDue = decision.due,
-                dreamGateReasons = decision.reasons,
-                observedSignalUnits = state.dreamObservedSignalUnits,
-                processedSignalUnits = state.dreamProcessedSignalUnits,
-                minSignalUnits = settings.dreamWikiMinSignalUnits,
             ),
         )
     }
@@ -1294,12 +1269,7 @@ class ChatPanel(
         when (event) {
             is com.adobe.clawdea.knowledge.drift.DriftEvent.CodeRename -> "CodeRename"
             is com.adobe.clawdea.knowledge.drift.DriftEvent.ManifestStale -> "ManifestStale"
-            is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamIndexCleanup -> "DreamIndexCleanup"
-            is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamLinkNormalization -> "DreamLinkNormalization"
-            is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamSourceReferenceFix -> "DreamSourceReferenceFix"
-            is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamDuplicateConcept -> "DreamDuplicateConcept"
-            is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamStaleConcept -> "DreamStaleConcept"
-            is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamMissingConcept -> "DreamMissingConcept"
+            is com.adobe.clawdea.knowledge.drift.DriftEvent.CommitDrift -> "CommitDrift"
             is com.adobe.clawdea.knowledge.drift.DriftEvent.WikiSuggestion -> "WikiSuggestion(${event.kind.name})"
         }
 
@@ -1307,12 +1277,7 @@ class ChatPanel(
         when (event) {
             is com.adobe.clawdea.knowledge.drift.DriftEvent.CodeRename -> event.wikiPage.fileName.toString()
             is com.adobe.clawdea.knowledge.drift.DriftEvent.ManifestStale -> event.repoKey
-            is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamIndexCleanup -> event.targetFile.fileName.toString()
-            is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamLinkNormalization -> event.targetFile.fileName.toString()
-            is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamSourceReferenceFix -> event.targetFile.fileName.toString()
-            is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamDuplicateConcept -> event.targetFile.fileName.toString()
-            is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamStaleConcept -> event.targetFile.fileName.toString()
-            is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamMissingConcept -> event.targetFile.fileName.toString()
+            is com.adobe.clawdea.knowledge.drift.DriftEvent.CommitDrift -> event.wikiPage.fileName.toString()
             is com.adobe.clawdea.knowledge.drift.DriftEvent.WikiSuggestion -> event.title
         }
 
@@ -1337,23 +1302,10 @@ class ChatPanel(
                     sb.appendLine("  - missing repo key: `${event.repoKey}` (line ${event.lineHint})")
                     sb.appendLine("  - action: check whether the repo moved (update path) or was deleted (`propose_edit` the manifest to comment out or remove the bullet).")
                 }
-                is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamIndexCleanup -> {
-                    appendDreamEvent(sb, "DreamIndexCleanup", event.targetFile, event.title, "use `propose_edit` to clean up the wiki index: ${event.patchPlan}")
-                }
-                is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamLinkNormalization -> {
-                    appendDreamEvent(sb, "DreamLinkNormalization", event.targetFile, event.title, "use `propose_edit` to normalize the link: ${event.patchPlan}")
-                }
-                is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamSourceReferenceFix -> {
-                    appendDreamEvent(sb, "DreamSourceReferenceFix", event.targetFile, event.title, "use `propose_edit` to fix stale source references: ${event.patchPlan}")
-                }
-                is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamDuplicateConcept -> {
-                    appendDreamEvent(sb, "DreamDuplicateConcept", event.targetFile, event.title, "review the overlap, then use `propose_edit` to merge or redirect content if appropriate: ${event.patchPlan}")
-                }
-                is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamStaleConcept -> {
-                    appendDreamEvent(sb, "DreamStaleConcept", event.targetFile, event.title, "verify the concept is stale, then use `propose_edit` to update or remove it: ${event.patchPlan}")
-                }
-                is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamMissingConcept -> {
-                    appendDreamEvent(sb, "DreamMissingConcept", event.targetFile, event.title, "use `propose_write` to draft the missing concept page if it is still useful: ${event.patchPlan}")
+                is com.adobe.clawdea.knowledge.drift.DriftEvent.CommitDrift -> {
+                    sb.appendLine("- **CommitDrift** in `${event.wikiPage.fileName}`")
+                    sb.appendLine("  - commits: ${event.commitShas.joinToString(", ")}")
+                    sb.appendLine("  - touched paths: ${event.touchedPaths.joinToString(", ")}")
                 }
                 is com.adobe.clawdea.knowledge.drift.DriftEvent.WikiSuggestion -> {
                     sb.appendLine("- **WikiSuggestion (${event.kind.name})**: ${event.title}")
@@ -1369,18 +1321,6 @@ class ChatPanel(
         sb.appendLine()
         sb.appendLine("After fixing each event, the user accepts/rejects via the diff dialog as usual.")
         return sb.toString()
-    }
-
-    private fun appendDreamEvent(
-        sb: StringBuilder,
-        eventName: String,
-        targetFile: java.nio.file.Path,
-        title: String,
-        action: String,
-    ) {
-        sb.appendLine("- **$eventName** in `${targetFile.fileName}`")
-        sb.appendLine("  - title: $title")
-        sb.appendLine("  - action: $action")
     }
 
     fun suggestInitIfMissingClaudeMd() = sessionManager.suggestInitIfMissingClaudeMd()
