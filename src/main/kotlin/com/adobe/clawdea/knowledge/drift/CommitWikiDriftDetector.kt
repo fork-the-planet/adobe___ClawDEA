@@ -91,7 +91,7 @@ object CommitWikiDriftDetector {
                 stream.filter { Files.isRegularFile(it) && it.fileName?.toString()?.endsWith(".md") == true }
                     .forEach { path ->
                         val text = runCatching { Files.readString(path) }.getOrNull() ?: return@forEach
-                        pages += PageMentions(path, normalizeMentions(MentionIndex.buildForPage(text)))
+                        pages += PageMentions(path, MentionIndex.buildForPage(text))
                     }
             }
         } catch (e: Throwable) {
@@ -137,23 +137,6 @@ object CommitWikiDriftDetector {
      * This is sufficient for the documented test cases and matches the spec —
      * paths are the load-bearing signal.
      */
-    /**
-     * MentionIndex extracts tokens with the regex `[A-Za-z0-9_./-]+`, which
-     * greedily includes trailing sentence punctuation. Normalize by stripping
-     * trailing dots/dashes so a markdown sentence ending in a path still
-     * matches the bare touched path.
-     */
-    private fun normalizeMentions(mentions: Set<String>): Set<String> {
-        val out = mutableSetOf<String>()
-        for (m in mentions) {
-            val trimmed = m.trimEnd('.', '-', '/')
-            if (trimmed.isNotEmpty() && MentionIndex.isValidToken(trimmed)) out += trimmed
-            // Keep the original too in case it's a legit basename/path.
-            if (MentionIndex.isValidToken(m)) out += m
-        }
-        return out
-    }
-
     private fun commitTokens(commit: CommitInfo): Set<String> {
         val out = mutableSetOf<String>()
         for (path in commit.touchedPaths) {

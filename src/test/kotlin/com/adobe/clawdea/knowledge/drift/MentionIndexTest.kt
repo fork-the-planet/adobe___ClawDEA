@@ -59,6 +59,22 @@ class MentionIndexTest {
         assertEquals(setOf("FooBar", "Singleton", "Contract", "Color", "DataHolder", "Sealed"), names)
     }
 
+    @Test fun `buildForPage strips trailing punctuation from path tokens`() {
+        // Sentence period after a path used to produce a token like `Foo.kt.`
+        // that failed to match the actual touched path `Foo.kt`. Normalize it.
+        val markdown = """
+            # Page
+
+            Implemented in src/main/kotlin/com/adobe/Foo.kt. Then more text follows.
+            Another reference: src/test/kotlin/Bar.kt, also see Baz.kt; finally Qux.kt!
+        """.trimIndent()
+        val mentions = MentionIndex.buildForPage(markdown)
+        assertTrue("clean path is in mentions", "src/main/kotlin/com/adobe/Foo.kt" in mentions)
+        assertFalse("trailing-period path is NOT in mentions", "src/main/kotlin/com/adobe/Foo.kt." in mentions)
+        assertTrue("comma-trimmed path is in mentions", "src/test/kotlin/Bar.kt" in mentions)
+        assertFalse("trailing-comma path is NOT in mentions", "src/test/kotlin/Bar.kt," in mentions)
+    }
+
     @Test fun `buildForPage indexes paths and class names from markdown`() {
         val markdown = """
             # WikiAuthor

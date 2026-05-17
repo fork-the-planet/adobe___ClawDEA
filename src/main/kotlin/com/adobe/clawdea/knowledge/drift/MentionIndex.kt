@@ -53,15 +53,24 @@ object MentionIndex {
         KT_DECL_RX.findAll(source).map { it.groupValues[1] }.toSet()
 
     /**
+     * Trailing markdown punctuation that the path regex `[A-Za-z0-9_./-]+`
+     * may greedily capture (e.g. `Foo.kt.` at the end of a sentence). Stripped
+     * before validation so callers see clean tokens.
+     */
+    private const val TRAILING_PUNCTUATION = ".-/,;:?!)]"
+
+    /**
      * Pull every "valid" identifier-like token out of a markdown page so the
      * detector can intersect against touched paths and class names.
      */
     fun buildForPage(markdown: String): Set<String> {
         val out = mutableSetOf<String>()
         // Path tokens — anything matching src/.../*.{kt,java,md} or build files.
+        // Strip trailing markdown punctuation (e.g. sentence period after a path)
+        // before validation so `Foo.kt.` becomes `Foo.kt`.
         Regex("""[A-Za-z0-9_./-]+""").findAll(markdown).forEach { match ->
-            val token = match.value
-            if (isValidToken(token)) out += token
+            val trimmed = match.value.trimEnd(*TRAILING_PUNCTUATION.toCharArray())
+            if (trimmed.isNotEmpty() && isValidToken(trimmed)) out += trimmed
         }
         // Identifier tokens — bare PascalCase names (e.g. `WikiAgentsArg`).
         BASENAME_RX.findAll(markdown).forEach { match ->
