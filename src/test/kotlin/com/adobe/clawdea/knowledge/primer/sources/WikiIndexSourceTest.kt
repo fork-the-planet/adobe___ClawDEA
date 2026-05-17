@@ -15,27 +15,43 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class WikiIndexSourceTest {
-    @Test
-    fun `directive asks for standard markdown wiki links`() {
-        val directive = WikiIndexSource.buildDirective(".claude/wiki", autoUpdate = false)
 
+    // --- Librarian anchor (enableWikiLibrarian=true) ---
+    // Full routing rules live in WIKI_LIBRARIAN_PROMPT (CliProcess); the
+    // anchor here is the in-context nudge co-located with the TOC.
+
+    @Test fun `librarian anchor names the Agent tool and the wiki-librarian subagent`() {
+        val anchor = WikiIndexSource.buildLibrarianAnchor()
+        assertTrue(anchor.contains("Agent(subagent_type=\"wiki-librarian\""))
+        assertTrue(anchor.contains("first tool call"))
+    }
+
+    @Test fun `librarian anchor explicitly covers change-safety questions`() {
+        // The bug we're guarding against: the model self-classifies validation /
+        // change-safety questions as out of scope and skips the librarian.
+        val anchor = WikiIndexSource.buildLibrarianAnchor()
+        assertTrue(anchor.contains("change-safety"))
+        assertTrue(anchor.contains("is this safe?"))
+        assertTrue(anchor.contains("will this regress"))
+    }
+
+    // --- Legacy directive (enableWikiLibrarian=false) ---
+
+    @Test fun `legacy directive asks for standard markdown wiki links`() {
+        val directive = WikiIndexSource.buildLegacyDirective(".claude/wiki", autoUpdate = false)
         assertTrue(directive.contains("Use standard Markdown links between wiki pages:"))
         assertTrue(directive.contains("[Concept](concept.md)"))
         assertTrue(directive.contains("[Concept](concepts/concept.md)"))
         assertTrue(directive.contains("Do not create new `[[concept]]` references"))
     }
 
-    @Test
-    fun `auto-update gap action asks for markdown index links`() {
-        val directive = WikiIndexSource.buildDirective(".claude/wiki", autoUpdate = true)
-
+    @Test fun `legacy auto-update gap action asks for markdown index links`() {
+        val directive = WikiIndexSource.buildLegacyDirective(".claude/wiki", autoUpdate = true)
         assertTrue(directive.contains("[Title](concepts/<slug>.md)"))
     }
 
-    @Test
-    fun `reviewed gap action preserves propose tools`() {
-        val directive = WikiIndexSource.buildDirective(".claude/wiki", autoUpdate = false)
-
+    @Test fun `legacy reviewed gap action preserves propose tools`() {
+        val directive = WikiIndexSource.buildLegacyDirective(".claude/wiki", autoUpdate = false)
         assertTrue(directive.contains("`propose_write`"))
         assertTrue(directive.contains("`propose_edit`"))
         assertTrue(directive.contains("[Title](concepts/<slug>.md)"))

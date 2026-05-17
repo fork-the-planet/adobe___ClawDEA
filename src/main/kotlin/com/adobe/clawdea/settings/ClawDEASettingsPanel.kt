@@ -147,16 +147,15 @@ class ClawDEASettingsPanel {
     val enableKnowledgeLayerCheckbox = JBCheckBox("Enable knowledge layer", true).apply {
         toolTipText = "Main switch. When off, ClawDEA stops assembling MAP/wiki/notes/workspace into the primer and disables the related MCP tools."
     }
+    val enableWikiLibrarianCheckbox = JBCheckBox("Enable wiki librarian", true).apply {
+        toolTipText = "When on, the primer instructs the main agent to delegate design questions to the wiki-librarian Claude Code subagent via Task. The subagent is injected per-session via --agents and search_wiki is not registered as an MCP tool. When off, the legacy search_wiki probe directive is used."
+    }
     val enableWorkspaceCheckbox = JBCheckBox("Enable workspace manifest", true).apply {
         toolTipText = "Read sibling repos from .clawdea-workspace.md and surface them via list_workspace_repos / read_sibling_* MCP tools."
     }
     val autoUpdateWikiCheckbox = JBCheckBox("Auto-update wiki on drift", false).apply {
         toolTipText = "When on, high-confidence drift fixes (single-match code renames; manifest comment-out) apply silently; learn-on-probe-miss writes use Write/Edit instead of propose_*. When off, every change goes through diff review."
     }
-    val enableDreamWikiMaintenanceCheckbox = JBCheckBox("Enable Dream wiki maintenance", true)
-    val dreamWikiMinElapsedHoursField = JBTextField(DreamWikiSettingsParser.MIN_ELAPSED_HOURS_DEFAULT.toString(), 6)
-    val dreamWikiMinSignalUnitsField = JBTextField(DreamWikiSettingsParser.MIN_SIGNAL_UNITS_DEFAULT.toString(), 6)
-    val dreamWikiScanThrottleMinutesField = JBTextField(DreamWikiSettingsParser.SCAN_THROTTLE_MINUTES_DEFAULT.toString(), 6)
 
     // Profiling fields
     private val BACKEND_OPTIONS = arrayOf("Auto", "IntelliJ Profiler", "JFR")
@@ -210,12 +209,9 @@ class ClawDEASettingsPanel {
         .addSeparator()
         .addLabeledComponent(JBLabel("Knowledge layer"), JPanel(), 0, false)
         .addComponent(enableKnowledgeLayerCheckbox, 1)
+        .addComponent(enableWikiLibrarianCheckbox, 2)
         .addComponent(enableWorkspaceCheckbox, 2)
         .addComponent(autoUpdateWikiCheckbox, 2)
-        .addComponent(enableDreamWikiMaintenanceCheckbox, 2)
-        .addLabeledComponent(JBLabel("Dream min elapsed (hours):"), dreamWikiMinElapsedHoursField, 2, false)
-        .addLabeledComponent(JBLabel("Dream min signal units:"), dreamWikiMinSignalUnitsField, 2, false)
-        .addLabeledComponent(JBLabel("Dream scan throttle (minutes):"), dreamWikiScanThrottleMinutesField, 2, false)
         .addSeparator()
         .addLabeledComponent(JBLabel("Profiling"), JPanel(), 0, false)
         .addLabeledComponent(JBLabel("Backend:"), profilingBackendCombo, 1, false)
@@ -269,9 +265,6 @@ class ClawDEASettingsPanel {
         }
         checkConnectionButton.addActionListener { doCheckConnection() }
         enableKnowledgeLayerCheckbox.addItemListener {
-            updateKnowledgeLayerEnabledState()
-        }
-        enableDreamWikiMaintenanceCheckbox.addItemListener {
             updateKnowledgeLayerEnabledState()
         }
         showProviderCard()
@@ -424,12 +417,9 @@ class ClawDEASettingsPanel {
         preloadSkillCatalogCheckbox.isSelected = state.preloadSkillCatalog
         gatewayBareModeCheckbox.isSelected = state.gatewayBareMode
         enableKnowledgeLayerCheckbox.isSelected = state.enableKnowledgeLayer
+        enableWikiLibrarianCheckbox.isSelected = state.enableWikiLibrarian
         enableWorkspaceCheckbox.isSelected = state.enableWorkspace
         autoUpdateWikiCheckbox.isSelected = state.autoUpdateWiki
-        enableDreamWikiMaintenanceCheckbox.isSelected = state.enableDreamWikiMaintenance
-        dreamWikiMinElapsedHoursField.text = state.dreamWikiMinElapsedHours.toString()
-        dreamWikiMinSignalUnitsField.text = state.dreamWikiMinSignalUnits.toString()
-        dreamWikiScanThrottleMinutesField.text = state.dreamWikiScanThrottleMinutes.toString()
         selectProfilingBackend(state.profilingBackendPreference)
         profilingSamplingIntervalField.text = state.profilingSamplingIntervalMs.toString()
         profilingMaxDurationField.text = state.profilingMaxDurationSeconds.toString()
@@ -468,12 +458,9 @@ class ClawDEASettingsPanel {
         state.preloadSkillCatalog = preloadSkillCatalogCheckbox.isSelected
         state.gatewayBareMode = gatewayBareModeCheckbox.isSelected
         state.enableKnowledgeLayer = enableKnowledgeLayerCheckbox.isSelected
+        state.enableWikiLibrarian = enableWikiLibrarianCheckbox.isSelected
         state.enableWorkspace = enableWorkspaceCheckbox.isSelected
         state.autoUpdateWiki = autoUpdateWikiCheckbox.isSelected
-        state.enableDreamWikiMaintenance = enableDreamWikiMaintenanceCheckbox.isSelected
-        state.dreamWikiMinElapsedHours = parseIntField(dreamWikiMinElapsedHoursField, DreamWikiSettingsParser::minElapsedHours)
-        state.dreamWikiMinSignalUnits = parseIntField(dreamWikiMinSignalUnitsField, DreamWikiSettingsParser::minSignalUnits)
-        state.dreamWikiScanThrottleMinutes = parseIntField(dreamWikiScanThrottleMinutesField, DreamWikiSettingsParser::scanThrottleMinutes)
         state.profilingBackendPreference = selectedProfilingBackendKey()
         state.profilingSamplingIntervalMs = profilingSamplingIntervalField.text.toIntOrNull() ?: 10
         state.profilingMaxDurationSeconds = profilingMaxDurationField.text.toIntOrNull() ?: 900
@@ -509,12 +496,9 @@ class ClawDEASettingsPanel {
             preloadSkillCatalogCheckbox.isSelected != state.preloadSkillCatalog ||
             gatewayBareModeCheckbox.isSelected != state.gatewayBareMode ||
             enableKnowledgeLayerCheckbox.isSelected != state.enableKnowledgeLayer ||
+            enableWikiLibrarianCheckbox.isSelected != state.enableWikiLibrarian ||
             enableWorkspaceCheckbox.isSelected != state.enableWorkspace ||
             autoUpdateWikiCheckbox.isSelected != state.autoUpdateWiki ||
-            enableDreamWikiMaintenanceCheckbox.isSelected != state.enableDreamWikiMaintenance ||
-            normalizedIntField(dreamWikiMinElapsedHoursField, DreamWikiSettingsParser::minElapsedHours) != state.dreamWikiMinElapsedHours ||
-            normalizedIntField(dreamWikiMinSignalUnitsField, DreamWikiSettingsParser::minSignalUnits) != state.dreamWikiMinSignalUnits ||
-            normalizedIntField(dreamWikiScanThrottleMinutesField, DreamWikiSettingsParser::scanThrottleMinutes) != state.dreamWikiScanThrottleMinutes ||
             selectedProfilingBackendKey() != state.profilingBackendPreference ||
             profilingSamplingIntervalField.text != state.profilingSamplingIntervalMs.toString() ||
             profilingMaxDurationField.text != state.profilingMaxDurationSeconds.toString() ||
@@ -584,20 +568,10 @@ class ClawDEASettingsPanel {
 
     private fun updateKnowledgeLayerEnabledState() {
         val knowledgeEnabled = enableKnowledgeLayerCheckbox.isSelected
-        val dreamEnabled = knowledgeEnabled && enableDreamWikiMaintenanceCheckbox.isSelected
+        enableWikiLibrarianCheckbox.isEnabled = knowledgeEnabled
         enableWorkspaceCheckbox.isEnabled = knowledgeEnabled
         autoUpdateWikiCheckbox.isEnabled = knowledgeEnabled
-        enableDreamWikiMaintenanceCheckbox.isEnabled = knowledgeEnabled
-        dreamWikiMinElapsedHoursField.isEnabled = dreamEnabled
-        dreamWikiMinSignalUnitsField.isEnabled = dreamEnabled
-        dreamWikiScanThrottleMinutesField.isEnabled = dreamEnabled
     }
-
-    private fun parseIntField(field: JBTextField, parser: (String) -> Int): Int =
-        normalizedIntField(field, parser).also { field.text = it.toString() }
-
-    private fun normalizedIntField(field: JBTextField, parser: (String) -> Int): Int =
-        parser(field.text)
 
     private fun selectedProfilingBackendKey(): String {
         val idx = profilingBackendCombo.selectedIndex

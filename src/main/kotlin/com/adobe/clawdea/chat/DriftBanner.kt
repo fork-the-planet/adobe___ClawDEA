@@ -54,23 +54,16 @@ class DriftBanner(
                 is DriftEvent.ManifestStale -> {
                     "✓ commented out stale manifest entry: ${event.repoKey} (path missing)"
                 }
-                is DriftEvent.DreamLinkNormalization -> {
-                    "✓ normalized wiki link: ${event.targetFile.fileName} · ${event.title}"
+                is DriftEvent.CommitDrift -> {
+                    // CommitDrift is never auto-applied — wiki-author handles it.
+                    // This branch exists only for `when` exhaustivity.
+                    "✓ commit drift: ${event.wikiPage.fileName}"
                 }
-                is DriftEvent.DreamIndexCleanup -> {
-                    "✓ applied Dream index cleanup: ${event.targetFile.fileName} · ${event.title}"
-                }
-                is DriftEvent.DreamSourceReferenceFix -> {
-                    "✓ applied Dream source reference fix: ${event.targetFile.fileName} · ${event.title}"
-                }
-                is DriftEvent.DreamDuplicateConcept -> {
-                    "✓ applied Dream duplicate concept update: ${event.targetFile.fileName} · ${event.title}"
-                }
-                is DriftEvent.DreamStaleConcept -> {
-                    "✓ applied Dream stale concept update: ${event.targetFile.fileName} · ${event.title}"
-                }
-                is DriftEvent.DreamMissingConcept -> {
-                    "✓ applied Dream missing concept update: ${event.targetFile.fileName} · ${event.title}"
+                is DriftEvent.WikiSuggestion -> {
+                    // WikiSuggestion is never auto-applied in v1 — this branch
+                    // exists only for `when` exhaustivity and should not be
+                    // reachable in practice.
+                    "✓ wiki suggestion: ${event.title}"
                 }
             }
         }
@@ -91,7 +84,7 @@ class DriftBanner(
             return
         }
         val n = current.size
-        val label = if (current.any { it.isDreamEvent() }) {
+        val label = if (current.any { it.isMaintenanceSuggestion() }) {
             if (n == 1) "maintenance suggestion" else "maintenance suggestions"
         } else {
             if (n == 1) "stale ref" else "stale refs"
@@ -108,14 +101,10 @@ class DriftBanner(
         updateHtml(html)
     }
 
-    private fun DriftEvent.isDreamEvent(): Boolean =
+    private fun DriftEvent.isMaintenanceSuggestion(): Boolean =
         when (this) {
-            is DriftEvent.DreamDuplicateConcept,
-            is DriftEvent.DreamIndexCleanup,
-            is DriftEvent.DreamLinkNormalization,
-            is DriftEvent.DreamMissingConcept,
-            is DriftEvent.DreamSourceReferenceFix,
-            is DriftEvent.DreamStaleConcept,
+            is DriftEvent.CommitDrift,
+            is DriftEvent.WikiSuggestion,
             -> true
             is DriftEvent.CodeRename,
             is DriftEvent.ManifestStale,

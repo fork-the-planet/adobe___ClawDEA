@@ -541,6 +541,11 @@ em { color: var(--subtext0); }
     border-radius: 8px;
     font-size: 12px;
 }
+/* When the card is injected inside a tool block, tighten the spacing so the
+   prompt visually belongs to the tool it gates rather than the next message. */
+[data-tool-id] > .permission-card {
+    margin: 4px 0 0 0;
+}
 .permission-header {
     display: flex;
     align-items: center;
@@ -632,27 +637,21 @@ em { color: var(--subtext0); }
     color: var(--overlay0, #6c7086);
     font-size: 11px;
 }
-/* Auto-allowed notice: compact, subdued, no buttons — signals a silent approval. */
-.permission-card.permission-card--auto-allowed {
-    background: rgba(108, 112, 134, 0.08);
-    border-color: rgba(108, 112, 134, 0.25);
-    padding: 6px 10px;
+/* Auto-allowed marker: inline next to "Output" on the tool's result row.
+ * Replaces the old standalone auto-allowed card, which used to render via
+ * appendHtml and could land in the wrong chat tab when multiple panels were
+ * open. The marker now rides the per-tool injectToolOutput path, which is
+ * panel-routed by tool_use_id, so it lands in the right tab by construction.
+ */
+.tool-auto-allowed {
+    margin-left: auto;
+    padding-left: 8px;
+    color: var(--overlay1, #7f849c);
+    font-size: 10px;
+    font-weight: 400;
     cursor: help;
 }
-.permission-card--auto-allowed .permission-header {
-    color: var(--overlay1, #7f849c);
-    font-weight: 400;
-    font-size: 11px;
-}
-.permission-card--auto-allowed .permission-icon { font-size: 12px; }
-.permission-card--auto-allowed .permission-title code {
-    font-size: 10px;
-}
-.permission-card--auto-allowed .permission-summary {
-    margin: 3px 0 0 18px;
-    color: var(--overlay1, #7f849c);
-    font-size: 10px;
-}
+.tool-result-header { width: 100%; }
 
 /* AskUserQuestion card */
 .question-card {

@@ -11,7 +11,6 @@
  */
 package com.adobe.clawdea.knowledge.drift
 
-import com.adobe.clawdea.knowledge.wiki.WikiLink
 import com.intellij.openapi.diagnostic.Logger
 import java.nio.file.Files
 import java.nio.file.Path
@@ -35,13 +34,8 @@ object DriftAutoApplier {
             val ok = when (event) {
                 is DriftEvent.CodeRename -> applyCodeRename(event)
                 is DriftEvent.ManifestStale -> applyManifestStale(event, today)
-                is DriftEvent.DreamLinkNormalization -> applyDreamLinkNormalization(event)
-                is DriftEvent.DreamIndexCleanup,
-                is DriftEvent.DreamSourceReferenceFix,
-                is DriftEvent.DreamDuplicateConcept,
-                is DriftEvent.DreamStaleConcept,
-                is DriftEvent.DreamMissingConcept,
-                -> false
+                is DriftEvent.CommitDrift -> false       // wiki-author handles
+                is DriftEvent.WikiSuggestion -> false    // wiki-author handles
             }
             if (ok) applied += event
         }
@@ -67,43 +61,6 @@ object DriftAutoApplier {
         if (!line.contains("**${event.repoKey}**")) return false
         lines[idx] = "# $line  # auto-removed $today: path missing"
         return atomicWrite(event.manifestPath, lines.joinToString("\n"))
-    }
-
-    private fun applyDreamLinkNormalization(event: DriftEvent.DreamLinkNormalization): Boolean {
-        if (!event.autoApplicable) return false
-        val wikiRoot = wikiRootFor(event.targetFile) ?: return false
-        val pageRelativePath = relativizeWikiPage(event.targetFile) ?: return false
-        val text = runCatching { Files.readString(event.targetFile) }.getOrNull() ?: return false
-        val oldLinks = WikiLink.extractConceptLinks(pageRelativePath, text)
-            .filter { it.original.startsWith("[[") }
-        if (oldLinks.size != 1) return false
-
-        val oldLink = oldLinks.single()
-        if (!Files.exists(conceptPageFor(wikiRoot, oldLink.targetSlug))) return false
-        val replacement = WikiLink.toMarkdownLink(pageRelativePath, oldLink.targetSlug)
-        val updated = text.replace(oldLink.original, replacement)
-        if (updated == text) return false
-        return atomicWrite(event.targetFile, updated)
-    }
-
-    private fun conceptPageFor(wikiRoot: Path, targetSlug: String): Path =
-        wikiRoot.resolve("concepts/$targetSlug.md").normalize()
-
-    private fun wikiRootFor(targetFile: Path): Path? {
-        val normalized = targetFile.normalize()
-        val names = (0 until normalized.nameCount).map { normalized.getName(it).toString() }
-        val wikiIndex = names.windowed(size = 2).indexOfFirst { it == listOf(".claude", "wiki") }
-        if (wikiIndex < 0) return null
-        val wikiRoot = names.take(wikiIndex + 2).joinToString("/")
-        return normalized.root?.resolve(wikiRoot) ?: Path.of(wikiRoot)
-    }
-
-    private fun relativizeWikiPage(targetFile: Path): String? {
-        val normalized = targetFile.normalize()
-        val names = (0 until normalized.nameCount).map { normalized.getName(it).toString() }
-        val wikiIndex = names.windowed(size = 2).indexOfFirst { it == listOf(".claude", "wiki") }
-        if (wikiIndex < 0) return null
-        return names.drop(wikiIndex + 2).joinToString("/")
     }
 
     private fun atomicWrite(target: Path, content: String): Boolean {

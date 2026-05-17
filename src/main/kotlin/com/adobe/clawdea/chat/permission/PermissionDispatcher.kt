@@ -32,14 +32,13 @@ import java.util.concurrent.atomic.AtomicLong
  * the user resolves later we cache the decision so the next retry of the same
  * (toolName, inputJson) skips the prompt entirely.
  *
- * [notifyAutoAllowed] is the non-blocking companion: used when the MCP handler
- * has already decided to allow a call (e.g. under "Allow all") and just wants
- * to notify the UI that a tool ran without approval. The UI renders a compact
- * "auto-allowed" notice rather than an interactive card.
+ * Auto-allow notifications (e.g. "Allow all" silent-allow) flow through
+ * [com.adobe.clawdea.chat.permission.AutoAllowSignal] instead — they are
+ * panel-routed via the matching `ToolUse` event so multi-tab projects don't
+ * render the marker in the wrong tab.
  */
 open class PermissionDispatcher(
     private val onRender: (PermissionRequest) -> Unit,
-    private val onAutoAllowed: (PermissionRequest) -> Unit = {},
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
     private val lock = Any()
@@ -72,11 +71,12 @@ open class PermissionDispatcher(
         toolName: String,
         inputJson: String,
         timeoutMs: Long = DEFAULT_PROMPT_TIMEOUT_MS,
+        toolUseId: String? = null,
     ): Result {
         val cacheKey = cacheKey(toolName, inputJson)
         consumePendingDecision(cacheKey)?.let { return it }
 
-        val request = newRequest(toolName, inputJson)
+        val request = newRequest(toolName, inputJson, toolUseId)
         inFlight[request.requestId] = request
         try {
             onRender(request)
@@ -111,21 +111,6 @@ open class PermissionDispatcher(
             abandoned[request.requestId] = cacheKey
         }
         return Result(PermissionRequest.Decision.DENY, timedOut = true)
-    }
-
-    /**
-     * Non-blocking counterpart to [submit]. The decision is already ALLOW; we
-     * just want the UI to show a compact notice. Never touches [inFlight]
-     * because there's nothing to resolve later — the request is born finished.
-     */
-    fun notifyAutoAllowed(toolName: String, inputJson: String) {
-        val request = newRequest(toolName, inputJson)
-        request.resolve(PermissionRequest.Decision.ALLOW)
-        try {
-            onAutoAllowed(request)
-        } catch (_: Exception) {
-            // UI failed to render: silent. The CLI call already proceeded.
-        }
     }
 
     fun resolve(
@@ -174,10 +159,10 @@ open class PermissionDispatcher(
     private fun cacheKey(toolName: String, inputJson: String): String =
         toolName + "\u0000" + inputJson
 
-    private fun newRequest(toolName: String, inputJson: String): PermissionRequest {
+    private fun newRequest(toolName: String, inputJson: String, toolUseId: String?): PermissionRequest {
         val requestId = "perm-${counter.incrementAndGet()}"
         val summary = PermissionSummaryBuilder.build(toolName, inputJson)
-        return PermissionRequest(requestId, toolName, inputJson, summary)
+        return PermissionRequest(requestId, toolName, inputJson, summary, toolUseId)
     }
 
     /** Visible for testing. */

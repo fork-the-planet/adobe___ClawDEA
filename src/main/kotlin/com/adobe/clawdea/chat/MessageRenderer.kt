@@ -279,15 +279,18 @@ class MessageRenderer(var autoAcceptEdits: Boolean = false, private val projectB
         }
     }
 
-    fun renderToolResult(content: String): String {
+    fun renderToolResult(content: String, autoAllowed: Boolean = false): String {
         if (content.isBlank()) return ""
         val escaped = escapeHtml(content)
         val truncated = if (escaped.length > 500) escaped.substring(0, 500) + "..." else escaped
         val chevron = "▸"
+        val autoBadge = if (autoAllowed) {
+            """ <span class="tool-auto-allowed" title="Auto-allowed by Tool approval = Allow all">&#9889; Auto-allowed</span>"""
+        } else ""
         return """
             <div class="tool-result-header" data-action="toggle-tool-body">
                 <span class="tool-chevron">$chevron</span>
-                <span class="tool-result-label">Output</span>
+                <span class="tool-result-label">Output</span>$autoBadge
             </div>
             <div class="tool-body-collapsible"><pre class="tool-output">$truncated</pre></div>
         """.trimIndent()

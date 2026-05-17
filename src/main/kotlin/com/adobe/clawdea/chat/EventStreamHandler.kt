@@ -16,6 +16,7 @@ import com.adobe.clawdea.cli.CliBridge
 import com.adobe.clawdea.cli.CliEvent
 import com.adobe.clawdea.cli.TaskEventExtractor
 import com.intellij.openapi.application.ApplicationManager
+
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import javax.swing.JLabel
@@ -39,6 +40,15 @@ class EventStreamHandler(
     private val isUserInputPending: () -> Boolean,
     private val onShowErrorNotification: (message: String) -> Unit,
     private val onTurnSucceeded: () -> Unit = {},
+    /**
+     * Consults the project-level [com.adobe.clawdea.chat.permission.AutoAllowSignal].
+     * Returns true (and consumes the signal) when the (toolName, inputJson) pair was
+     * silently allowed by "Allow all" — used to flag the matching tool block.
+     * Routing through the ToolUse event guarantees the marker lands in this panel,
+     * not whichever tab is focused at the moment the MCP handler decides.
+     */
+    private val consumeAutoAllow: (toolUseId: String, toolName: String, inputJson: String) -> Boolean = { _, _, _ -> false },
+    private val isToolAutoAllowed: (toolName: String) -> Boolean = { _ -> false },
 ) {
     val messageBuffer = StringBuilder()
     var turnHasContent = false
@@ -47,10 +57,47 @@ class EventStreamHandler(
     var lastAssistantText: String = ""
 
     private val toolNameById = mutableMapOf<String, String>()
+    private val toolInputById = mutableMapOf<String, String>()
+    private val autoAllowedToolIds = mutableSetOf<String>()
     private var toolStartTime: Long = 0
     private val taskExtractor = TaskEventExtractor()
     private val pendingToolUses = mutableMapOf<String, CliEvent.ToolUse>()
     private var progressSequence = 0L
+
+    /**
+     * Recent ToolUse events keyed by `(toolName + 0x00 + inputJson)` so the
+     * project-level [com.adobe.clawdea.chat.permission.PermissionRouterRegistry]
+     * can ask "is this call yours?" when the MCP `request_permission` arrives.
+     * The CLI emits `ToolUse` to stream-json before invoking
+     * `request_permission`, so the lookup races cleanly: the panel that just
+     * processed the ToolUse holds the entry, others don't.
+     *
+     * Entries are removed when the matching ToolResult arrives (or pruned by
+     * size — a runaway turn must not grow this map forever).
+     */
+    private val routableToolUses = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    /**
+     * Visible to the panel for [PermissionRouter] registration. Preferred path:
+     * id-based lookup. Crucially does NOT remove the entry — CC retries
+     * `request_permission` after the 45 s dispatcher timeout and the retry
+     * must still find this panel. Entries are dropped at ToolResult time.
+     */
+    fun claimPermissionById(toolUseId: String): Boolean =
+        routableToolUses.containsKey(toolUseId)
+
+    /**
+     * Fallback used only when CC doesn't pass `tool_use_id` to
+     * `request_permission` (older versions, stdio SDK path). Linear scan
+     * since this map is bounded to in-flight calls per panel.
+     */
+    fun claimPermission(toolName: String, inputJson: String): String? {
+        val needle = toolName + " " + inputJson
+        for ((id, value) in routableToolUses) {
+            if (value == needle) return id
+        }
+        return null
+    }
 
     fun startEventListener() {
         scope.launch {
@@ -111,6 +158,17 @@ class EventStreamHandler(
                 }
                 for (toolUse in event.toolUses) {
                     toolNameById[toolUse.id] = toolUse.name
+                    toolInputById[toolUse.id] = toolUse.input
+                    routableToolUses[toolUse.id] = toolUse.name + " " + toolUse.input
+                    // Note: auto-allow consumption is deferred to ToolResult time.
+                    // The MCP `request_permission` handler races with this
+                    // AssistantMessage on the EDT — under "Allow all" the CLI
+                    // emits ToolUse and calls request_permission concurrently,
+                    // and the EDT often processes ToolUse before the HTTP
+                    // handler runs AutoAllowSignal.notify(). Consuming here
+                    // would miss the signal and the marker never renders.
+                    // ToolResult arrives strictly after request_permission
+                    // returns, so the signal is reliably present by then.
                     totalTokensUsed += ContextBudgetCalculator.estimateTokens(toolUse.input)
                     toolStartTime = System.currentTimeMillis()
 
@@ -188,6 +246,21 @@ class EventStreamHandler(
                     browserRenderer.injectElapsedTime(event.toolUseId, renderer.formatElapsed(elapsed))
                 }
                 val toolName = toolNameById.remove(event.toolUseId)
+                val toolInput = toolInputById.remove(event.toolUseId)
+                // Mark as auto-allowed if either the signal was already
+                // posted (slow tools) or the mode says it would have been
+                // (fast tools where ToolResult arrives before notify()).
+                val consumed = toolName != null && toolInput != null &&
+                    (consumeAutoAllow(event.toolUseId, toolName, toolInput) ||
+                        isToolAutoAllowed(toolName))
+                if (consumed) {
+                    autoAllowedToolIds.add(event.toolUseId)
+                }
+                // Drop the permission-routing entry for this tool call. Claims
+                // do not remove (CC may retry request_permission after the 45 s
+                // dispatcher timeout); ToolResult is the authoritative end of
+                // the call, so the map can't grow forever.
+                routableToolUses.remove(event.toolUseId)
                 if (toolName == "Bash") {
                     onFilesystemRefresh("")
                 }
@@ -216,7 +289,11 @@ class EventStreamHandler(
                     // redundant.
                 } else if (event.content.isNotBlank()) {
                     totalTokensUsed += ContextBudgetCalculator.estimateTokens(event.content)
-                    browserRenderer.injectToolOutput(event.toolUseId, renderer.renderToolResult(event.content))
+                    val autoAllowed = autoAllowedToolIds.remove(event.toolUseId)
+                    browserRenderer.injectToolOutput(
+                        event.toolUseId,
+                        renderer.renderToolResult(event.content, autoAllowed),
+                    )
                 }
                 onContextLabelUpdate()
                 watchForToolResultStall(progressSequence)

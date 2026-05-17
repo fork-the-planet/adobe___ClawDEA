@@ -259,20 +259,7 @@ class PermissionDispatcherTest {
         assertFalse("decision arrived in time, must not be flagged timed out", result.timedOut)
     }
 
-    @Test
-    fun `notifyAutoAllowed is non-blocking, pre-resolves the request, and calls onAutoAllowed`() {
-        var submitted = false
-        var autoNotified: PermissionRequest? = null
-        val dispatcher = PermissionDispatcher(
-            onRender = { _ -> submitted = true },
-            onAutoAllowed = { req -> autoNotified = req },
-        )
-        dispatcher.notifyAutoAllowed("Bash", """{"command":"ls"}""")
-        assertFalse("onRender must not fire on auto-allow", submitted)
-        val captured = autoNotified!!
-        assertEquals("Bash", captured.toolName)
-        assertEquals(PermissionRequest.Decision.ALLOW, captured.decision)
-        assertEquals(0L, captured.latch.count)
-        assertNull("auto-allowed requests are not tracked in flight", dispatcher.peek(captured.requestId))
-    }
+    // Auto-allow notifications no longer flow through PermissionDispatcher; they
+    // route via AutoAllowSignal, which is consumed by the matching ToolUse event
+    // so the marker lands in the right ChatPanel tab. See AutoAllowSignalTest.
 }

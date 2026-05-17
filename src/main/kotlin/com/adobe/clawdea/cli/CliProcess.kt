@@ -119,12 +119,26 @@ class CliProcess(
 
             command.addAll(listOf("--mcp-config", tmpFile.absolutePath))
 
+            if (settings.enableWikiLibrarian) {
+                try {
+                    val agentsJson = com.adobe.clawdea.knowledge.wiki.WikiAgentsArg.buildJson()
+                    command.addAll(listOf("--agents", agentsJson))
+                    log.info("Injected wiki-librarian + wiki-author subagents via --agents (${agentsJson.length} chars)")
+                } catch (e: Throwable) {
+                    log.warn("Failed to build wiki agents --agents arg; skipping injection", e)
+                }
+            }
+
             val disallowed = buildDisallowedTools(mcpAvailable = true)
             if (disallowed != null) {
                 command.addAll(listOf("--disallowedTools", disallowed))
             }
 
             val systemPrompt = buildString {
+                if (settings.enableWikiLibrarian) {
+                    append(WIKI_LIBRARIAN_PROMPT)
+                    append("\n\n")
+                }
                 append(MCP_SYSTEM_PROMPT)
                 append("\n\n")
                 append(EDIT_REVIEW_PROMPT)
@@ -516,6 +530,31 @@ Debug tool guidelines:
 - When done debugging, call debug_stop to clean up your breakpoints and restore any user breakpoints you disabled.
 - Use debug_evaluate to test hypotheses. Use debug_set_value to modify variables at runtime to verify fix ideas without recompiling.
 - When investigating runtime bugs, prefer setting a breakpoint and inspecting live state over guessing from static reads. Combine with code-index tools: indices to locate, debugger to observe.
+        """.trimIndent()
+
+        private val WIKI_LIBRARIAN_PROMPT = """
+Wiki-knowledge routing:
+For any non-trivial question whose answer depends on how THIS PROJECT works, your FIRST tool call MUST be:
+
+  Agent(subagent_type="wiki-librarian", prompt="<the user's question, verbatim or paraphrased>")
+
+This covers — non-exhaustively:
+- "how does X work?", "where is Y?", "what is the contract of Z?"
+- architecture, contracts between subsystems, why one approach instead of another
+- **change-safety / validation questions**: "is this change safe?", "will this regress X?", "what would break if we did Y?", "is it OK to remove/rename/raise/lower Z?"
+- code review, design review, or any judgement call that depends on existing project invariants
+
+If you can imagine the answer starting with "well, in this project we do …" or "that would break the invariant that …", the librarian must go first.
+
+The wiki-librarian subagent holds this project's design knowledge (`.claude/wiki/`) in its own fresh context every call, reads the relevant concept pages, verifies against current source where it matters, and returns a synthesised answer with page citations. You then use that answer to drive any follow-up code work or validation.
+
+Not `Read`. Not `search_text`. Not `find_symbol`. Not `Bash`. One `Agent` call FIRST, then everything else is unrestricted.
+
+Two narrow exceptions where you may skip the librarian:
+1. You already have a specific wiki page slug from a previous turn — read it directly via `read_wiki_page(name='<slug>', kind='concept')`.
+2. Purely lexical edits where you already know the exact symbol or string to change (renames, formatting, lint, single-typo fixes on a known location).
+
+If the user's question is about the codebase as a project (not "fix this typo on line 42"), go through the librarian first. No exceptions beyond the two above.
         """.trimIndent()
 
         private val EDIT_REVIEW_PROMPT = """

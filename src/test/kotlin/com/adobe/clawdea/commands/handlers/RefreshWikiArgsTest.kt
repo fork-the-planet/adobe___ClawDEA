@@ -22,11 +22,6 @@ class RefreshWikiArgsTest {
     }
 
     @Test
-    fun `parse recognizes dream flag`() {
-        assertEquals(RefreshWikiArgs(forceDream = true), RefreshWikiArgs.parse("--dream"))
-    }
-
-    @Test
     fun `parse recognizes status flag`() {
         assertEquals(RefreshWikiArgs(statusOnly = true), RefreshWikiArgs.parse("--status"))
     }
@@ -39,34 +34,34 @@ class RefreshWikiArgsTest {
     @Test
     fun `parse recognizes combined flags in any order`() {
         assertEquals(
-            RefreshWikiArgs(forceDream = true, statusOnly = true, applyLowRisk = true),
-            RefreshWikiArgs.parse("  --apply-low-risk   --dream --status  "),
+            RefreshWikiArgs(statusOnly = true, applyLowRisk = true),
+            RefreshWikiArgs.parse("  --apply-low-risk   --status  "),
         )
     }
 
     @Test
-    fun `status formatter includes pending event counts and gate reasons`() {
+    fun `status formatter includes pending event counts`() {
         val status = RefreshWikiStatus(
             lastRunAt = "2026-05-09T10:00:00Z",
-            lastSuccessfulScanAt = "",
-            lastStatus = "not-due:elapsed-time",
-            filteredCandidateCount = 3,
-            pendingEventTypes = listOf("CodeRename", "DreamMissingConcept", "CodeRename"),
-            dreamGateDue = false,
-            dreamGateReasons = listOf("elapsed-time", "insufficient-signal"),
-            observedSignalUnits = 7,
-            processedSignalUnits = 4,
-            minSignalUnits = 5,
+            pendingEventTypes = listOf("CodeRename", "CommitDrift", "CodeRename"),
         )
 
         assertEquals(
-            "Dream wiki status: last run 2026-05-09T10:00:00Z; " +
-                "last successful scan never; " +
-                "last status not-due:elapsed-time; " +
-                "filtered candidates 3; " +
-                "pending drift 3 (CodeRename=2, DreamMissingConcept=1); " +
-                "gate not due (elapsed-time,insufficient-signal); " +
-                "signal 3/5.",
+            "Wiki drift status: last run 2026-05-09T10:00:00Z; " +
+                "pending drift 3 (CodeRename=2, CommitDrift=1).",
+            RefreshWikiStatusFormatter.format(status),
+        )
+    }
+
+    @Test
+    fun `status formatter shows never and none for empty state`() {
+        val status = RefreshWikiStatus(
+            lastRunAt = "",
+            pendingEventTypes = emptyList(),
+        )
+
+        assertEquals(
+            "Wiki drift status: last run never; pending drift 0 (none).",
             RefreshWikiStatusFormatter.format(status),
         )
     }

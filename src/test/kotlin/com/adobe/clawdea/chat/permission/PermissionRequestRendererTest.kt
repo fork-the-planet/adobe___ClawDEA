@@ -17,24 +17,11 @@ import org.junit.Test
 
 class PermissionRequestRendererTest {
 
-    @Test
-    fun `auto-allowed notice explicitly flags allow-all execution`() {
-        val renderer = PermissionRequestRenderer(MessageRenderer())
-        val request = PermissionRequest(
-            requestId = "perm-1",
-            toolName = "Bash",
-            inputJson = """{"command":"mvn test"}""",
-            summary = "mvn test",
-        ).apply {
-            resolve(PermissionRequest.Decision.ALLOW)
-        }
-
-        val html = renderer.renderAutoAllowedNotice(request)
-
-        assertTrue(html.contains("Auto-allowed by Tool approval = Allow all"))
-        assertTrue(html.contains("Auto-allowed: <code>Bash</code>"))
-        assertTrue(html.contains("mvn test"))
-    }
+    // The auto-allowed standalone notice was removed: a single project-level
+    // PermissionDispatcher rendered it via appendHtml, which lands in whichever
+    // ChatPanel is focused, not the one that owns the originating tool call.
+    // The marker is now inlined on the tool's Output row by MessageRenderer.
+    // See MessageRendererTest.
 
     @Test
     fun `permission card includes always allow scope choices`() {
@@ -56,7 +43,7 @@ class PermissionRequestRendererTest {
     }
 
     @Test
-    fun `permission card explicitly labels the exact command being approved`() {
+    fun `permission card contains only action buttons without redundant tool info`() {
         val renderer = PermissionRequestRenderer(MessageRenderer())
         val request = PermissionRequest(
             requestId = "perm-1",
@@ -67,7 +54,9 @@ class PermissionRequestRendererTest {
 
         val html = renderer.renderCard(request)
 
-        assertTrue(html.contains("Exact command/input to approve:"))
-        assertTrue(html.contains("./gradlew build"))
+        assertTrue(html.contains("permission-allow-btn"))
+        assertTrue(html.contains("permission-deny-btn"))
+        assertTrue(!html.contains("Approve tool:"))
+        assertTrue(!html.contains("Exact command/input"))
     }
 }

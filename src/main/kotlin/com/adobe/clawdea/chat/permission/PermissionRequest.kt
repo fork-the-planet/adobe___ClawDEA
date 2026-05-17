@@ -27,6 +27,15 @@ class PermissionRequest(
     val toolName: String,
     val inputJson: String,
     val summary: String,
+    /**
+     * The originating `tool_use_id` from the CLI's stream-json `ToolUse`
+     * event, or null when the request_permission MCP call could not be
+     * matched to a pending ToolUse (e.g. because it arrived before the
+     * panel's EventStreamHandler processed the event). When present, the
+     * UI injects the approval card inside the matching tool block; when
+     * null, it falls back to appending at the bottom of the transcript.
+     */
+    val toolUseId: String? = null,
 ) {
     val latch: CountDownLatch = CountDownLatch(1)
     private val decisionRef: AtomicReference<Decision?> = AtomicReference(null)

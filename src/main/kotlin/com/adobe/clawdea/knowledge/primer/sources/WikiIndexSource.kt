@@ -27,22 +27,29 @@ class WikiIndexSource : PrimerSource {
         val wikiDir = Paths.get(basePath, state.claudeDirName, state.wikiSubdir)
         val reader = WikiPageReader(WikiPath(wikiDir))
         val index = reader.readIndex() ?: return null
-        val directive = buildDirective(wikiDir.toString(), state.autoUpdateWiki)
-        return directive + "\n\n" + index
+        // When the librarian is on, ship a one-line anchor sitting right next to
+        // the TOC so the routing reminder is co-located with the content the
+        // model actually scans when answering. The full routing rules are in
+        // WIKI_LIBRARIAN_PROMPT (CliProcess); this is the in-context nudge.
+        if (state.enableWikiLibrarian) return buildLibrarianAnchor() + "\n\n" + index
+        return buildLegacyDirective(wikiDir.toString(), state.autoUpdateWiki) + "\n\n" + index
     }
 
     companion object {
-        // The directive teaches four behaviors that the index alone does not:
-        //   1) Probe FIRST — before any other code-search tool call.
-        //   2) Read the matching concept page when the probe hits.
-        //   3) Auto-learn (write a new concept page) when the probe misses on a
-        //      real subsystem — silently if the user opted into auto-update,
-        //      otherwise via propose_write so each draft is diff-reviewed.
-        //   4) Distinguish `search_wiki` (orientation) from `search_text` (raw
-        //      strings in code) — agents kept conflating them.
-        // Background: sessions 9b36ff6b (#139), 537c8342 (#141), 1afd97af (#24),
-        // and 2d41a87f (#86) all skipped the wiki under successively softer wording.
-        internal fun buildDirective(wikiDir: String, autoUpdate: Boolean): String {
+        internal fun buildLibrarianAnchor(): String =
+            "**For any question about this project, your first tool call is " +
+                "`Agent(subagent_type=\"wiki-librarian\", prompt=<question>)`. " +
+                "This includes change-safety / validation questions like " +
+                "\"is this safe?\" or \"will this regress X?\". " +
+                "The TOC below is what the librarian sees too."
+
+        // History: sessions 9b36ff6b (#139), 537c8342 (#141), 1afd97af (#24),
+        // and 2d41a87f (#86) all skipped the wiki under successively softer
+        // wording. The hard-rule pattern (first call must be a wiki action,
+        // exact tool named, alternatives explicitly listed) is what finally
+        // worked for the legacy `search_wiki` flow and is preserved below.
+
+        internal fun buildLegacyDirective(wikiDir: String, autoUpdate: Boolean): String {
             val gapAction = if (autoUpdate) {
                 "**write a new concept page** at `$wikiDir/concepts/<slug>.md` directly with the " +
                     "`Write` tool (auto-update is enabled — silent learning). Then append a " +

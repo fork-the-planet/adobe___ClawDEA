@@ -17,7 +17,8 @@ import com.adobe.clawdea.chat.editreview.EditReviewHandler
 import com.adobe.clawdea.chat.permission.AskUserQuestionRenderer
 import com.adobe.clawdea.chat.permission.ClaudePermissionSettingsWriter
 import com.adobe.clawdea.chat.permission.PermissionDispatcher
-import com.adobe.clawdea.chat.permission.PermissionDispatcherHolder
+import com.adobe.clawdea.chat.permission.PermissionRouter
+import com.adobe.clawdea.chat.permission.PermissionRouterRegistry
 import com.adobe.clawdea.chat.permission.PermissionRequestHandler
 import com.adobe.clawdea.chat.permission.PermissionRequestRenderer
 import com.adobe.clawdea.cli.CliBridge
@@ -163,7 +164,6 @@ class ChatPanel(
     private val askUserQuestionRenderer = AskUserQuestionRenderer(renderer)
     private val permissionDispatcher: PermissionDispatcher = PermissionDispatcher(
         onRender = { req -> permissionRequestHandler.onRender(req) },
-        onAutoAllowed = { req -> permissionRequestHandler.onAutoAllowed(req) },
     )
     private val permissionRequestHandler: PermissionRequestHandler = PermissionRequestHandler(
         dispatcher = permissionDispatcher,
@@ -316,6 +316,15 @@ class ChatPanel(
             isUserInputPending = { permissionDispatcher.hasInFlightRequests() },
             onShowErrorNotification = { msg -> showNotification("ClawDEA", msg, NotificationType.ERROR) },
             onTurnSucceeded = { consecutivePromptStalls = 0 },
+            consumeAutoAllow = { toolUseId, toolName, inputJson ->
+                val signal = com.adobe.clawdea.chat.permission.AutoAllowSignal.getInstance(project)
+                signal.consume(toolUseId) || signal.consume(toolName, inputJson)
+            },
+            isToolAutoAllowed = { toolName ->
+                McpServer.getInstance(project).activeToolApprovalMode == "allow-all" &&
+                    toolName != "AskUserQuestion" &&
+                    !toolName.startsWith("mcp__clawdea-intellij__")
+            },
         )
 
         // Session manager: handles resume, reload, wake recovery, interactive terminal
@@ -361,9 +370,21 @@ class ChatPanel(
         // Permission approval bridge: Allow/Deny buttons from permission cards.
         permissionRequestHandler.install(permissionDecisionQuery)
 
-        // Expose this panel's dispatcher to the project-level McpServer so the
-        // `request_permission` MCP tool can call into it.
-        PermissionDispatcherHolder.getInstance(project).set(permissionDispatcher)
+        // Register this panel as a permission router so the project-level
+        // McpServer can route `request_permission` calls to whichever panel
+        // actually emitted the matching ToolUse — not whichever panel happens
+        // to be focused. The router's claim() consults EventStreamHandler's
+        // recent-ToolUse map, which is panel-local.
+        PermissionRouterRegistry.getInstance(project).register(
+            router = object : PermissionRouter {
+                override fun claimById(toolUseId: String): Boolean =
+                    eventHandler.claimPermissionById(toolUseId)
+
+                override fun claim(toolName: String, inputJson: String): String? =
+                    eventHandler.claimPermission(toolName, inputJson)
+            },
+            dispatcher = permissionDispatcher,
+        )
 
         // Open-file bridge: Read tool links open the file in the editor
         openFileQuery.addHandler { filePath ->
@@ -399,6 +420,14 @@ class ChatPanel(
                 driftBanner.setEvents(events)
                 for (line in driftBanner.autoApplyNotificationLines(applied)) {
                     appendHtml(renderer.renderInfoMessage(line))
+                }
+                // One-line summary note after wiki-author auto-applies (Task 11).
+                // Skip when nothing was applied or the auto-update setting is off.
+                if (applied.isNotEmpty() && ClawDEASettings.getInstance().state.autoUpdateWiki) {
+                    val acted = applied.size
+                    val msg = "Auto-applied wiki updates from drift events: $acted acted on. " +
+                        "See `.claude/wiki/.drift-state.json` for details."
+                    appendHtml(renderer.renderInfoMessage(msg))
                 }
             }
         }
@@ -1043,6 +1072,11 @@ class ChatPanel(
         ) { _ ->
             val invariantTemplate = com.adobe.clawdea.knowledge.prompts.PromptResource.load("wiki-page-invariant")
             val navigationTemplate = com.adobe.clawdea.knowledge.prompts.PromptResource.load("wiki-page-navigation")
+            val capWording = if (ClawDEASettings.getInstance().state.enableWikiLibrarian) {
+                "all concept areas worth documenting (main subsystems, key APIs, active feature work, architectural decisions worth capturing). Err on the side of more focused pages over fewer dense ones — there is no upper bound. A 200-file project might have 5 concepts; a 5,000-file project might have 50."
+            } else {
+                "5–10 concept areas worth documenting (main subsystems, key APIs, active\n               feature work, architectural decisions worth capturing)."
+            }
             """
             Bootstrap an initial wiki for this project at .claude/wiki/.
 
@@ -1057,8 +1091,7 @@ class ChatPanel(
                package.json, build.gradle.kts) to understand the project shape.
             2. Call the get_primer MCP tool to see the auto-generated REPO_STATE
                (current branch, recent commits, hot files), then identify
-               5–10 concept areas worth documenting (main subsystems, key APIs, active
-               feature work, architectural decisions worth capturing).
+               $capWording
             3. **Classify each concept independently** into one of:
                - `pipeline` — multi-step resolution with cache boundaries or registration order
                  a reasoner could get wrong (content policy resolution, dispatcher invalidation,
@@ -1211,11 +1244,7 @@ class ChatPanel(
         }
 
         val service = project.getService(com.adobe.clawdea.knowledge.drift.DriftDetectionService::class.java)
-        val (events, _) = if (args.forceDream) {
-            service.runDreamScanNow()
-        } else {
-            service.rescan()
-        }
+        val (events, _) = service.rescan()
 
         if (args.applyLowRisk) {
             return RefreshWikiResult.Local(formatAppliedWikiDrift(service.lastAppliedEvents()))
@@ -1225,7 +1254,12 @@ class ChatPanel(
             return RefreshWikiResult.Local("(no drift events detected)")
         }
 
-        return RefreshWikiResult.ReviewPrompt(buildRefreshWikiPrompt(events))
+        val prompt = if (ClawDEASettings.getInstance().state.enableWikiLibrarian) {
+            com.adobe.clawdea.knowledge.drift.WikiAuthorDigestBuilder.build(events)
+        } else {
+            buildLegacyRefreshWikiPrompt(events)
+        }
+        return RefreshWikiResult.ReviewPrompt(prompt)
     }
 
     private fun dispatchOrQueueRefreshPrompt(prompt: String) {
@@ -1249,35 +1283,14 @@ class ChatPanel(
     }
 
     private fun refreshWikiStatus(): String {
-        val basePath = project.basePath ?: return "Dream wiki status: project path unavailable."
+        val basePath = project.basePath ?: return "Wiki drift status: project path unavailable."
         val claudeDir = java.nio.file.Paths.get(basePath).resolve(".claude")
         val state = com.adobe.clawdea.knowledge.drift.DriftStateStore.read(claudeDir)
-        val settings = ClawDEASettings.getInstance().state
-        val now = java.time.Instant.now()
-        val decision = com.adobe.clawdea.knowledge.drift.DreamDueGate.evaluate(
-            enabled = settings.enableKnowledgeLayer && settings.enableDreamWikiMaintenance,
-            now = now,
-            state = state,
-            minElapsedHours = settings.dreamWikiMinElapsedHours,
-            minSignalUnits = settings.dreamWikiMinSignalUnits,
-            scanThrottleMinutes = settings.dreamWikiScanThrottleMinutes,
-            activeTurn = false,
-            lockHeld = state.dreamLockOwner.isNotBlank() ||
-                com.adobe.clawdea.knowledge.drift.DriftDetectionService.isDreamFilesystemLockHeld(claudeDir, now),
-        )
         val service = project.getService(com.adobe.clawdea.knowledge.drift.DriftDetectionService::class.java)
         return RefreshWikiStatusFormatter.format(
             RefreshWikiStatus(
-                lastRunAt = state.dreamLastRunAt,
-                lastSuccessfulScanAt = state.dreamLastSuccessfulScanAt,
-                lastStatus = state.dreamLastStatus,
-                filteredCandidateCount = state.dreamFilteredCandidateCount,
+                lastRunAt = state.lastScanAt,
                 pendingEventTypes = service.current().map { refreshWikiEventName(it) },
-                dreamGateDue = decision.due,
-                dreamGateReasons = decision.reasons,
-                observedSignalUnits = state.dreamObservedSignalUnits,
-                processedSignalUnits = state.dreamProcessedSignalUnits,
-                minSignalUnits = settings.dreamWikiMinSignalUnits,
             ),
         )
     }
@@ -1294,27 +1307,19 @@ class ChatPanel(
         when (event) {
             is com.adobe.clawdea.knowledge.drift.DriftEvent.CodeRename -> "CodeRename"
             is com.adobe.clawdea.knowledge.drift.DriftEvent.ManifestStale -> "ManifestStale"
-            is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamIndexCleanup -> "DreamIndexCleanup"
-            is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamLinkNormalization -> "DreamLinkNormalization"
-            is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamSourceReferenceFix -> "DreamSourceReferenceFix"
-            is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamDuplicateConcept -> "DreamDuplicateConcept"
-            is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamStaleConcept -> "DreamStaleConcept"
-            is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamMissingConcept -> "DreamMissingConcept"
+            is com.adobe.clawdea.knowledge.drift.DriftEvent.CommitDrift -> "CommitDrift"
+            is com.adobe.clawdea.knowledge.drift.DriftEvent.WikiSuggestion -> "WikiSuggestion(${event.kind.name})"
         }
 
     private fun refreshWikiEventTarget(event: com.adobe.clawdea.knowledge.drift.DriftEvent): String =
         when (event) {
             is com.adobe.clawdea.knowledge.drift.DriftEvent.CodeRename -> event.wikiPage.fileName.toString()
             is com.adobe.clawdea.knowledge.drift.DriftEvent.ManifestStale -> event.repoKey
-            is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamIndexCleanup -> event.targetFile.fileName.toString()
-            is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamLinkNormalization -> event.targetFile.fileName.toString()
-            is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamSourceReferenceFix -> event.targetFile.fileName.toString()
-            is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamDuplicateConcept -> event.targetFile.fileName.toString()
-            is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamStaleConcept -> event.targetFile.fileName.toString()
-            is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamMissingConcept -> event.targetFile.fileName.toString()
+            is com.adobe.clawdea.knowledge.drift.DriftEvent.CommitDrift -> event.wikiPage.fileName.toString()
+            is com.adobe.clawdea.knowledge.drift.DriftEvent.WikiSuggestion -> event.title
         }
 
-    private fun buildRefreshWikiPrompt(events: List<com.adobe.clawdea.knowledge.drift.DriftEvent>): String {
+    private fun buildLegacyRefreshWikiPrompt(events: List<com.adobe.clawdea.knowledge.drift.DriftEvent>): String {
         val sb = StringBuilder()
         sb.appendLine("The following drift events were detected. Review each and apply fixes via `propose_edit` or `propose_write`:")
         sb.appendLine()
@@ -1335,41 +1340,27 @@ class ChatPanel(
                     sb.appendLine("  - missing repo key: `${event.repoKey}` (line ${event.lineHint})")
                     sb.appendLine("  - action: check whether the repo moved (update path) or was deleted (`propose_edit` the manifest to comment out or remove the bullet).")
                 }
-                is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamIndexCleanup -> {
-                    appendDreamEvent(sb, "DreamIndexCleanup", event.targetFile, event.title, "use `propose_edit` to clean up the wiki index: ${event.patchPlan}")
+                is com.adobe.clawdea.knowledge.drift.DriftEvent.CommitDrift -> {
+                    // Should not appear when enableWikiLibrarian=false (the detector is gated),
+                    // but render minimally for safety.
+                    sb.appendLine("- **CommitDrift** in `${event.wikiPage.fileName}`")
+                    sb.appendLine("  - commits: ${event.commitShas.joinToString(", ")}")
+                    sb.appendLine("  - touched paths: ${event.touchedPaths.joinToString(", ")}")
                 }
-                is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamLinkNormalization -> {
-                    appendDreamEvent(sb, "DreamLinkNormalization", event.targetFile, event.title, "use `propose_edit` to normalize the link: ${event.patchPlan}")
-                }
-                is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamSourceReferenceFix -> {
-                    appendDreamEvent(sb, "DreamSourceReferenceFix", event.targetFile, event.title, "use `propose_edit` to fix stale source references: ${event.patchPlan}")
-                }
-                is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamDuplicateConcept -> {
-                    appendDreamEvent(sb, "DreamDuplicateConcept", event.targetFile, event.title, "review the overlap, then use `propose_edit` to merge or redirect content if appropriate: ${event.patchPlan}")
-                }
-                is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamStaleConcept -> {
-                    appendDreamEvent(sb, "DreamStaleConcept", event.targetFile, event.title, "verify the concept is stale, then use `propose_edit` to update or remove it: ${event.patchPlan}")
-                }
-                is com.adobe.clawdea.knowledge.drift.DriftEvent.DreamMissingConcept -> {
-                    appendDreamEvent(sb, "DreamMissingConcept", event.targetFile, event.title, "use `propose_write` to draft the missing concept page if it is still useful: ${event.patchPlan}")
+                is com.adobe.clawdea.knowledge.drift.DriftEvent.WikiSuggestion -> {
+                    sb.appendLine("- **WikiSuggestion (${event.kind.name})**: ${event.title}")
+                    sb.appendLine("  - rationale: ${event.rationale}")
+                    sb.appendLine("  - target files: ${event.targetFiles.joinToString(", ")}")
+                    if (event.sourcePage != null) {
+                        sb.appendLine("  - observed while reading: ${event.sourcePage}")
+                    }
+                    sb.appendLine("  - action: review the suggested change. If you agree, draft the wiki update via `propose_write` or `propose_edit`. If not, dismiss.")
                 }
             }
         }
         sb.appendLine()
         sb.appendLine("After fixing each event, the user accepts/rejects via the diff dialog as usual.")
         return sb.toString()
-    }
-
-    private fun appendDreamEvent(
-        sb: StringBuilder,
-        eventName: String,
-        targetFile: java.nio.file.Path,
-        title: String,
-        action: String,
-    ) {
-        sb.appendLine("- **$eventName** in `${targetFile.fileName}`")
-        sb.appendLine("  - title: $title")
-        sb.appendLine("  - action: $action")
     }
 
     fun suggestInitIfMissingClaudeMd() = sessionManager.suggestInitIfMissingClaudeMd()
@@ -1854,7 +1845,7 @@ class ChatPanel(
 
     override fun dispose() {
         scope.cancel()
-        PermissionDispatcherHolder.getInstance(project).clear(permissionDispatcher)
+        PermissionRouterRegistry.getInstance(project).unregister(permissionDispatcher)
         if (::driftListenerUnregister.isInitialized) {
             try { driftListenerUnregister() } catch (_: Throwable) {}
         }

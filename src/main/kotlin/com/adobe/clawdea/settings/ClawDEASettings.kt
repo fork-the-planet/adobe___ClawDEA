@@ -71,6 +71,15 @@ class ClawDEASettings : PersistentStateComponent<ClawDEASettings.State> {
         // Knowledge layer (Phase 1: REPO_STATE + primer)
         var enableKnowledgeLayer: Boolean = true,
         /**
+         * When true (default), the primer directive teaches the main agent to delegate
+         * project-design questions to the `wiki-librarian` Claude Code subagent via
+         * Task, and `search_wiki` is not registered as an MCP tool. When false, the
+         * legacy directive ("first call must be a wiki probe via search_wiki") is
+         * emitted and `search_wiki` is registered. See
+         * docs/specs/2026-05-16-wiki-librarian-subagent-design.md.
+         */
+        var enableWikiLibrarian: Boolean = true,
+        /**
          * Threshold above which REPO_STATE regeneration logs a warning (observability only —
          * does not interrupt the regen). A real timeout would require running the
          * regen on a worker thread with cancellable Future; deferred until the
@@ -88,10 +97,6 @@ class ClawDEASettings : PersistentStateComponent<ClawDEASettings.State> {
          * The Phase 4 drift detector also honors this flag.
          */
         var autoUpdateWiki: Boolean = false,
-        var enableDreamWikiMaintenance: Boolean = true,
-        var dreamWikiMinElapsedHours: Int = 24,
-        var dreamWikiMinSignalUnits: Int = 5,
-        var dreamWikiScanThrottleMinutes: Int = 10,
         // Knowledge layer (Phase 3: workspace manifest)
         /**
          * Top-level toggle for Phase 3 cross-project context. When true,
