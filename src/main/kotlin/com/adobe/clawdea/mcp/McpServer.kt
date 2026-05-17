@@ -11,9 +11,10 @@
  */
 package com.adobe.clawdea.mcp
 
+import com.adobe.clawdea.chat.permission.AutoAllowSignal
 import com.adobe.clawdea.chat.permission.ClaudePermissionSettingsReader
-import com.adobe.clawdea.chat.permission.PermissionDispatcherHolder
 import com.adobe.clawdea.chat.permission.PermissionPolicy
+import com.adobe.clawdea.chat.permission.PermissionRouterRegistry
 import com.adobe.clawdea.debug.McpDebugTools
 import com.adobe.clawdea.profiling.analysis.AnalysisService
 import com.adobe.clawdea.profiling.mcp.McpProfilingTools
@@ -72,7 +73,9 @@ class McpServer(private val project: Project) : Disposable {
         McpDebugTools(project).registerAll(router)
         McpProfilingTools(project, AnalysisService()).registerAll(router)
         McpPermissionPromptTool(
-            dispatcherSupplier = { PermissionDispatcherHolder.getInstance(project).get() },
+            dispatcherResolver = { toolName, inputJson, toolUseId ->
+                PermissionRouterRegistry.getInstance(project).route(toolName, inputJson, toolUseId)
+            },
             toolApprovalModeSupplier = { activeToolApprovalMode },
             permissionPolicySupplier = {
                 project.basePath?.let { basePath ->
@@ -82,6 +85,9 @@ class McpServer(private val project: Project) : Disposable {
                         ).read()
                     }
                 }
+            },
+            autoAllowNotifier = { toolName, inputJson, toolUseId ->
+                AutoAllowSignal.getInstance(project).notify(toolName, inputJson, toolUseId)
             },
         ).registerAll(router)
     }

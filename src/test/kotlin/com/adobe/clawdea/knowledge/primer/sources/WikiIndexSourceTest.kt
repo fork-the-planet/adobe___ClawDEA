@@ -16,9 +16,24 @@ import org.junit.Test
 
 class WikiIndexSourceTest {
 
-    // The librarian path is exercised at the CLI invocation layer
-    // (WIKI_LIBRARIAN_PROMPT in CliProcess); WikiIndexSource itself emits
-    // nothing in that mode, so there is no source-level directive to test.
+    // --- Librarian anchor (enableWikiLibrarian=true) ---
+    // Full routing rules live in WIKI_LIBRARIAN_PROMPT (CliProcess); the
+    // anchor here is the in-context nudge co-located with the TOC.
+
+    @Test fun `librarian anchor names the Agent tool and the wiki-librarian subagent`() {
+        val anchor = WikiIndexSource.buildLibrarianAnchor()
+        assertTrue(anchor.contains("Agent(subagent_type=\"wiki-librarian\""))
+        assertTrue(anchor.contains("first tool call"))
+    }
+
+    @Test fun `librarian anchor explicitly covers change-safety questions`() {
+        // The bug we're guarding against: the model self-classifies validation /
+        // change-safety questions as out of scope and skips the librarian.
+        val anchor = WikiIndexSource.buildLibrarianAnchor()
+        assertTrue(anchor.contains("change-safety"))
+        assertTrue(anchor.contains("is this safe?"))
+        assertTrue(anchor.contains("will this regress"))
+    }
 
     // --- Legacy directive (enableWikiLibrarian=false) ---
 

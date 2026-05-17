@@ -24,18 +24,25 @@ class WikiIndexSource : PrimerSource {
     override fun load(project: Project): String? {
         val basePath = project.basePath ?: return null
         val state = ClawDEASettings.getInstance().state
-        // When the librarian is on, the system-prompt prefix (WIKI_LIBRARIAN_PROMPT
-        // in CliProcess) carries the routing instructions, and the librarian
-        // subagent reads the index itself in its own fresh context. Emitting
-        // either here just creates a bypass temptation for the main agent.
-        if (state.enableWikiLibrarian) return null
         val wikiDir = Paths.get(basePath, state.claudeDirName, state.wikiSubdir)
         val reader = WikiPageReader(WikiPath(wikiDir))
         val index = reader.readIndex() ?: return null
+        // When the librarian is on, ship a one-line anchor sitting right next to
+        // the TOC so the routing reminder is co-located with the content the
+        // model actually scans when answering. The full routing rules are in
+        // WIKI_LIBRARIAN_PROMPT (CliProcess); this is the in-context nudge.
+        if (state.enableWikiLibrarian) return buildLibrarianAnchor() + "\n\n" + index
         return buildLegacyDirective(wikiDir.toString(), state.autoUpdateWiki) + "\n\n" + index
     }
 
     companion object {
+        internal fun buildLibrarianAnchor(): String =
+            "**For any question about this project, your first tool call is " +
+                "`Agent(subagent_type=\"wiki-librarian\", prompt=<question>)`. " +
+                "This includes change-safety / validation questions like " +
+                "\"is this safe?\" or \"will this regress X?\". " +
+                "The TOC below is what the librarian sees too."
+
         // History: sessions 9b36ff6b (#139), 537c8342 (#141), 1afd97af (#24),
         // and 2d41a87f (#86) all skipped the wiki under successively softer
         // wording. The hard-rule pattern (first call must be a wiki action,

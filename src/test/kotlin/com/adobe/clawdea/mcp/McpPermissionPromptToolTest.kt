@@ -14,6 +14,7 @@ package com.adobe.clawdea.mcp
 import com.adobe.clawdea.chat.permission.PermissionDispatcher
 import com.adobe.clawdea.chat.permission.PermissionPolicy
 import com.adobe.clawdea.chat.permission.PermissionRequest
+import com.adobe.clawdea.chat.permission.PermissionRouterRegistry
 import com.adobe.clawdea.chat.permission.ClaudePermissionRule
 import com.adobe.clawdea.chat.permission.ClaudePermissionSettings
 import org.junit.Assert.assertEquals
@@ -28,11 +29,25 @@ class McpPermissionPromptToolTest {
     private fun neverDispatcher(): PermissionDispatcher =
         PermissionDispatcher(onRender = { _ -> /* never resolves */ })
 
+    /**
+     * The MCP tool now resolves dispatchers per-call via the project-level
+     * [PermissionRouterRegistry]. Tests that don't care about routing wrap a
+     * single dispatcher in a static "always claim" resolver so the call site
+     * stays terse — `McpPermissionPromptTool(routedTo(dispatcher))`.
+     */
+    private fun routedTo(dispatcher: PermissionDispatcher, toolUseId: String = "tu-test"):
+        (String, String, String) -> PermissionRouterRegistry.Routed? =
+        { _, _, callId ->
+            // If CC passed a tool_use_id, route returns that exact id; otherwise
+            // fall back to the test-supplied default.
+            PermissionRouterRegistry.Routed(dispatcher, callId.ifEmpty { toolUseId })
+        }
+
     @Test
     fun `auto-allows clawdea-intellij MCP tools without invoking the dispatcher`() {
         var rendered = false
         val dispatcher = PermissionDispatcher(onRender = { _ -> rendered = true })
-        val tool = McpPermissionPromptTool({ dispatcher })
+        val tool = McpPermissionPromptTool(routedTo(dispatcher))
         val result = tool.handle(mapOf(
             "tool_name" to "mcp__clawdea-intellij__find_files",
             "input" to """{"pattern":"foo"}""",
@@ -46,7 +61,7 @@ class McpPermissionPromptToolTest {
     fun `auto-allows Read without invoking the dispatcher`() {
         var rendered = false
         val dispatcher = PermissionDispatcher(onRender = { _ -> rendered = true })
-        val tool = McpPermissionPromptTool({ dispatcher })
+        val tool = McpPermissionPromptTool(routedTo(dispatcher))
         val result = tool.handle(mapOf("tool_name" to "Read", "input" to """{"file_path":"/tmp/x"}"""))
         assertFalse(rendered)
         assertTrue(result.text.contains("\"behavior\":\"allow\""))
@@ -55,7 +70,7 @@ class McpPermissionPromptToolTest {
     @Test
     fun `auto-allows Glob and Grep`() {
         val dispatcher = neverDispatcher()
-        val tool = McpPermissionPromptTool({ dispatcher })
+        val tool = McpPermissionPromptTool(routedTo(dispatcher))
         val glob = tool.handle(mapOf("tool_name" to "Glob", "input" to """{"pattern":"*.kt"}"""))
         val grep = tool.handle(mapOf("tool_name" to "Grep", "input" to """{"pattern":"foo"}"""))
         assertTrue(glob.text.contains("\"behavior\":\"allow\""))
@@ -70,7 +85,7 @@ class McpPermissionPromptToolTest {
             capturedId = req.requestId
             renderStarted.countDown()
         })
-        val tool = McpPermissionPromptTool({ dispatcher })
+        val tool = McpPermissionPromptTool(routedTo(dispatcher))
 
         val resultFuture = java.util.concurrent.CompletableFuture.supplyAsync {
             tool.handle(mapOf("tool_name" to "Bash", "input" to """{"command":"ls"}"""))
@@ -90,7 +105,7 @@ class McpPermissionPromptToolTest {
             capturedId = req.requestId
             renderStarted.countDown()
         })
-        val tool = McpPermissionPromptTool({ dispatcher })
+        val tool = McpPermissionPromptTool(routedTo(dispatcher))
 
         val resultFuture = java.util.concurrent.CompletableFuture.supplyAsync {
             tool.handle(mapOf("tool_name" to "Bash", "input" to """{"command":"rm -rf /"}"""))
@@ -104,34 +119,46 @@ class McpPermissionPromptToolTest {
 
     @Test
     fun `missing tool_name returns error`() {
-        val tool = McpPermissionPromptTool({ neverDispatcher() })
+        val tool = McpPermissionPromptTool(routedTo(neverDispatcher()))
         val result = tool.handle(mapOf("input" to "{}"))
         assertTrue(result.isError)
     }
 
     @Test
     fun `missing input still auto-allows trusted tools`() {
-        val tool = McpPermissionPromptTool({ neverDispatcher() })
+        val tool = McpPermissionPromptTool(routedTo(neverDispatcher()))
         val result = tool.handle(mapOf("tool_name" to "Read"))
         assertFalse(result.isError)
         assertTrue(result.text.contains("\"behavior\":\"allow\""))
     }
 
     @Test
-    fun `allow-all mode silently allows non-trusted tools and notifies the dispatcher`() {
+    fun `allow-all mode silently allows non-trusted tools and notifies the auto-allow notifier`() {
         var submitted = false
-        var autoAllowedWith: String? = null
+        var notifiedTool: String? = null
+        var notifiedInput: String? = null
+        var notifiedId: String? = null
         val dispatcher = PermissionDispatcher(
             onRender = { _ -> submitted = true },
-            onAutoAllowed = { req -> autoAllowedWith = req.toolName },
         )
         val tool = McpPermissionPromptTool(
-            dispatcherSupplier = { dispatcher },
+            dispatcherResolver = routedTo(dispatcher),
             toolApprovalModeSupplier = { "allow-all" },
+            autoAllowNotifier = { name, input, id ->
+                notifiedTool = name
+                notifiedInput = input
+                notifiedId = id
+            },
         )
-        val result = tool.handle(mapOf("tool_name" to "Bash", "input" to """{"command":"ls"}"""))
+        val result = tool.handle(mapOf(
+            "tool_name" to "Bash",
+            "input" to """{"command":"ls"}""",
+            "tool_use_id" to "tu-allow-all-1",
+        ))
         assertFalse("dispatcher.submit must not be called under allow-all", submitted)
-        assertEquals("Bash", autoAllowedWith)
+        assertEquals("Bash", notifiedTool)
+        assertEquals("""{"command":"ls"}""", notifiedInput)
+        assertEquals("tu-allow-all-1", notifiedId)
         assertTrue(result.text.contains("\"behavior\":\"allow\""))
     }
 
@@ -141,11 +168,11 @@ class McpPermissionPromptToolTest {
         var autoAllowed = false
         val dispatcher = PermissionDispatcher(
             onRender = { _ -> submitted = true },
-            onAutoAllowed = { _ -> autoAllowed = true },
         )
         val tool = McpPermissionPromptTool(
-            dispatcherSupplier = { dispatcher },
+            dispatcherResolver = routedTo(dispatcher),
             toolApprovalModeSupplier = { "allow-all" },
+            autoAllowNotifier = { _, _, _ -> autoAllowed = true },
             permissionPolicySupplier = {
                 PermissionPolicy {
                     ClaudePermissionSettings(
@@ -168,7 +195,7 @@ class McpPermissionPromptToolTest {
         var submitted = false
         val dispatcher = PermissionDispatcher(onRender = { _ -> submitted = true })
         val tool = McpPermissionPromptTool(
-            dispatcherSupplier = { dispatcher },
+            dispatcherResolver = routedTo(dispatcher),
             toolApprovalModeSupplier = { "confirm-all" },
             permissionPolicySupplier = {
                 PermissionPolicy {
@@ -194,7 +221,7 @@ class McpPermissionPromptToolTest {
             renderStarted.countDown()
         })
         val tool = McpPermissionPromptTool(
-            dispatcherSupplier = { dispatcher },
+            dispatcherResolver = routedTo(dispatcher),
             toolApprovalModeSupplier = { "confirm-all" },
         )
         val resultFuture = java.util.concurrent.CompletableFuture.supplyAsync {
@@ -214,7 +241,7 @@ class McpPermissionPromptToolTest {
             renderStarted.countDown()
         })
         val tool = McpPermissionPromptTool(
-            dispatcherSupplier = { dispatcher },
+            dispatcherResolver = routedTo(dispatcher),
             toolApprovalModeSupplier = { "allow-safe" },
         )
         val resultFuture = java.util.concurrent.CompletableFuture.supplyAsync {
@@ -246,10 +273,14 @@ class McpPermissionPromptToolTest {
     @Test
     fun `timed-out submit returns the wait-for-user deny payload`() {
         val dispatcher = object : PermissionDispatcher(onRender = { _ -> /* unused */ }) {
-            override fun submit(toolName: String, inputJson: String, timeoutMs: Long): Result =
-                Result(PermissionRequest.Decision.DENY, timedOut = true)
+            override fun submit(
+                toolName: String,
+                inputJson: String,
+                timeoutMs: Long,
+                toolUseId: String?,
+            ): Result = Result(PermissionRequest.Decision.DENY, timedOut = true)
         }
-        val tool = McpPermissionPromptTool({ dispatcher })
+        val tool = McpPermissionPromptTool(routedTo(dispatcher))
         val result = tool.handle(mapOf("tool_name" to "Bash", "input" to """{"command":"ls -la /tmp"}"""))
         assertFalse(result.isError)
         assertTrue("expected deny payload, got: ${result.text}", result.text.contains("\"behavior\":\"deny\""))
@@ -267,11 +298,11 @@ class McpPermissionPromptToolTest {
                 capturedId = req.requestId
                 renderStarted.countDown()
             },
-            onAutoAllowed = { _ -> autoAllowedCalled = true },
         )
         val tool = McpPermissionPromptTool(
-            dispatcherSupplier = { dispatcher },
+            dispatcherResolver = routedTo(dispatcher),
             toolApprovalModeSupplier = { "allow-all" },
+            autoAllowNotifier = { _, _, _ -> autoAllowedCalled = true },
         )
         val resultFuture = java.util.concurrent.CompletableFuture.supplyAsync {
             tool.handle(mapOf(
@@ -280,7 +311,7 @@ class McpPermissionPromptToolTest {
             ))
         }
         assertTrue("dispatcher.submit must be invoked for AskUserQuestion", renderStarted.await(2, TimeUnit.SECONDS))
-        assertFalse("AskUserQuestion must not flow through onAutoAllowed", autoAllowedCalled)
+        assertFalse("AskUserQuestion must not flow through autoAllowNotifier", autoAllowedCalled)
         dispatcher.resolve(capturedId, PermissionRequest.Decision.ALLOW)
         resultFuture.get(2, TimeUnit.SECONDS)
     }
@@ -293,7 +324,7 @@ class McpPermissionPromptToolTest {
             capturedId = req.requestId
             renderStarted.countDown()
         })
-        val tool = McpPermissionPromptTool({ dispatcher })
+        val tool = McpPermissionPromptTool(routedTo(dispatcher))
         val resultFuture = java.util.concurrent.CompletableFuture.supplyAsync {
             tool.handle(mapOf(
                 "tool_name" to "AskUserQuestion",
@@ -312,6 +343,30 @@ class McpPermissionPromptToolTest {
     }
 
     @Test
+    fun `request_permission forwards tool_use_id to the dispatcher resolver`() {
+        // Regression: claude-code 2.1.x passes tool_use_id alongside tool_name
+        // and input. The resolver must receive it so the registry can route by
+        // a byte-stable id rather than the fragile (toolName, inputJson) pair.
+        var seenToolUseId = ""
+        val dispatcher = PermissionDispatcher(onRender = { req ->
+            // Resolve immediately so submit() returns without blocking.
+            req.resolve(PermissionRequest.Decision.ALLOW)
+        })
+        val tool = McpPermissionPromptTool(
+            dispatcherResolver = { _, _, callId ->
+                seenToolUseId = callId
+                PermissionRouterRegistry.Routed(dispatcher, callId)
+            },
+        )
+        tool.handle(mapOf(
+            "tool_name" to "Bash",
+            "input" to """{"command":"ls"}""",
+            "tool_use_id" to "tu-from-cli-42",
+        ))
+        assertEquals("tu-from-cli-42", seenToolUseId)
+    }
+
+    @Test
     fun `allow path falls back to the original input when no updatedInput is provided`() {
         val renderStarted = CountDownLatch(1)
         lateinit var capturedId: String
@@ -319,7 +374,7 @@ class McpPermissionPromptToolTest {
             capturedId = req.requestId
             renderStarted.countDown()
         })
-        val tool = McpPermissionPromptTool({ dispatcher })
+        val tool = McpPermissionPromptTool(routedTo(dispatcher))
         val resultFuture = java.util.concurrent.CompletableFuture.supplyAsync {
             tool.handle(mapOf("tool_name" to "Bash", "input" to """{"command":"ls"}"""))
         }

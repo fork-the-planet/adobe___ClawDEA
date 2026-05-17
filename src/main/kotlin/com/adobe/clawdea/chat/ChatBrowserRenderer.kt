@@ -170,6 +170,29 @@ class ChatBrowserRenderer(
         )
     }
 
+    /**
+     * Append HTML to the tool block identified by [toolUseId]. Returns true
+     * when the injection script ran. Used by the permission flow to render
+     * the approval card *inside* the tool block instead of as a standalone
+     * top-level card — so multi-tab projects route correctly by construction.
+     *
+     * Falls through to no-op if the browser is not yet ready or the block
+     * does not exist (e.g. AskUserQuestion suppresses its own tool block).
+     */
+    fun injectToolAttachment(toolUseId: String, html: String) {
+        if (!browserReady || html.isBlank()) return
+        val escaped = escapeForJs(html)
+        val safeId = toolUseId.replace("\\", "\\\\").replace("\"", "\\\"")
+        browser.cefBrowser.executeJavaScript(
+            """(function(){
+                var block = document.querySelector('[data-tool-id="$safeId"]');
+                if (!block) return;
+                block.insertAdjacentHTML('beforeend', '$escaped');
+            })();""",
+            browser.cefBrowser.url, 0,
+        )
+    }
+
     fun updateEditLinkStatus(toolUseId: String, status: String, escapeHtml: (String) -> String) {
         if (!browserReady) return
         val safeId = toolUseId.replace("\\", "\\\\").replace("'", "\\'")

@@ -41,23 +41,27 @@ class PermissionRequestHandler(
     private val settingsWriter: ClaudePermissionSettingsWriter? = null,
 ) {
 
-    /** Called from the MCP dispatch thread when a new permission prompt is needed. */
+    /**
+     * Called from the MCP dispatch thread when a new permission prompt is needed.
+     *
+     * When the request carries a `toolUseId`, the card is injected *inside* the
+     * matching tool block via `data-tool-id` so the prompt visually attaches to
+     * the tool it gates and routes to the correct ChatPanel by construction
+     * (the tool block only exists in the panel that received the ToolUse).
+     *
+     * AskUserQuestion suppresses its own tool block (see EventStreamHandler), so
+     * its `toolUseId` will not match any DOM element. The same is true when the
+     * router didn't have a `toolUseId` to set. Both fall back to `appendHtml`.
+     */
     val onRender: (PermissionRequest) -> Unit = { request ->
         val html = renderRequest(request)
+        val toolUseId = request.toolUseId
         ApplicationManager.getApplication().invokeLater {
-            browserRenderer.appendHtml(html)
-        }
-    }
-
-    /**
-     * Called from the MCP dispatch thread when a request was silently allowed
-     * (e.g. under "Allow all"). We render a compact notice so the user sees
-     * what ran, but no buttons — there's nothing left to decide.
-     */
-    val onAutoAllowed: (PermissionRequest) -> Unit = { request ->
-        val html = renderer.renderAutoAllowedNotice(request)
-        ApplicationManager.getApplication().invokeLater {
-            browserRenderer.appendHtml(html)
+            if (toolUseId != null && request.toolName != McpPermissionPromptTool.ASK_USER_QUESTION) {
+                browserRenderer.injectToolAttachment(toolUseId, html)
+            } else {
+                browserRenderer.appendHtml(html)
+            }
         }
     }
 

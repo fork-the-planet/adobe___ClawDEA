@@ -26,15 +26,8 @@ class PermissionRequestRenderer(private val messageRenderer: MessageRenderer) {
 
     fun renderCard(request: PermissionRequest): String {
         val id = messageRenderer.escapeHtml(request.requestId)
-        val toolName = messageRenderer.escapeHtml(request.toolName)
-        val summary = messageRenderer.escapeHtml(request.summary)
         return """
             <div class="permission-card" data-permission-id="$id">
-                <div class="permission-header">
-                    <span class="permission-icon">&#9888;</span>
-                    <span class="permission-title">Approve tool: <code>$toolName</code></span>
-                </div>
-                <div class="permission-summary"><span class="permission-summary-label">Exact command/input to approve:</span> $summary</div>
                 <div class="permission-actions">
                     <button class="permission-allow-btn" data-action="permission-allow" data-permission-id="$id">Allow</button>
                     <button class="permission-always-btn" data-action="permission-always" data-permission-id="$id">Always allow...</button>
@@ -46,26 +39,6 @@ class PermissionRequestRenderer(private val messageRenderer: MessageRenderer) {
                         <button data-action="permission-always-scope" data-scope="tool" data-permission-id="$id">All calls to this tool</button>
                     </div>
                 </div>
-            </div>
-        """.trimIndent()
-    }
-
-    /**
-     * Renders a compact notice that a tool was auto-allowed by the current
-     * "Allow all" setting. Non-interactive: no buttons, just a visual signal
-     * so the user can see what ran and (in the tooltip) why it wasn't gated.
-     */
-    fun renderAutoAllowedNotice(request: PermissionRequest): String {
-        val toolName = messageRenderer.escapeHtml(request.toolName)
-        val summary = messageRenderer.escapeHtml(request.summary)
-        val tooltip = messageRenderer.escapeHtml("Auto-allowed by Tool approval = Allow all")
-        return """
-            <div class="permission-card permission-card--auto-allowed" title="$tooltip">
-                <div class="permission-header">
-                    <span class="permission-icon">&#9889;</span>
-                    <span class="permission-title">Auto-allowed: <code>$toolName</code></span>
-                </div>
-                <div class="permission-summary">$summary</div>
             </div>
         """.trimIndent()
     }

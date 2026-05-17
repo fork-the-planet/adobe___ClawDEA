@@ -14,8 +14,25 @@ package com.adobe.clawdea.mcp
 import com.adobe.clawdea.chat.permission.PermissionDispatcher
 import com.adobe.clawdea.chat.permission.PermissionPolicy
 import com.adobe.clawdea.chat.permission.PermissionRequest
+import com.adobe.clawdea.chat.permission.PermissionRouterRegistry
 import com.adobe.clawdea.chat.permission.PermissionToolInput
 import com.intellij.openapi.diagnostic.Logger
+
+/**
+ * Notified when a tool call is auto-allowed by "Allow all" mode (or trusted-MCP)
+ * so the matching ChatPanel can flag the tool block as auto-allowed once its
+ * `ToolUse` event arrives. See [com.adobe.clawdea.chat.permission.AutoAllowSignal].
+ *
+ * `toolUseId` is the CLI-assigned id Claude Code passes alongside the tool call
+ * (see qpK in claude-code 2.1.x — `H.call({tool_name, input, tool_use_id}, ...)`).
+ * It is preferred for routing since `(toolName, inputJson)` is byte-fragile:
+ * stream-json and JSON-RPC arguments may serialize the same input with subtly
+ * different whitespace or escaping. Empty string when CC did not provide it
+ * (older versions, or the stdio SDK path).
+ */
+fun interface AutoAllowNotifier {
+    fun notify(toolName: String, inputJson: String, toolUseId: String)
+}
 
 /**
  * Implements the `request_permission` MCP tool used by the Claude CLI's
@@ -32,9 +49,10 @@ import com.intellij.openapi.diagnostic.Logger
  *   4. Everything else — blocked on an interactive prompt card.
  */
 class McpPermissionPromptTool(
-    private val dispatcherSupplier: () -> PermissionDispatcher,
+    private val dispatcherResolver: (toolName: String, inputJson: String, toolUseId: String) -> PermissionRouterRegistry.Routed?,
     private val toolApprovalModeSupplier: () -> String = { "confirm-all" },
     private val permissionPolicySupplier: () -> PermissionPolicy? = { null },
+    private val autoAllowNotifier: AutoAllowNotifier = AutoAllowNotifier { _, _, _ -> },
 ) {
     private val log = Logger.getInstance(McpPermissionPromptTool::class.java)
 
@@ -45,6 +63,7 @@ class McpPermissionPromptTool(
             properties = listOf(
                 Triple("tool_name", "string", "Name of the tool the model wants to call"),
                 Triple("input", "string", "JSON-encoded arguments the tool would receive"),
+                Triple("tool_use_id", "string", "CLI-assigned id of the tool call (claude-code passes this alongside tool_name/input)"),
             ),
             required = listOf("tool_name"),
             handler = ::handle,
@@ -56,6 +75,7 @@ class McpPermissionPromptTool(
         val toolName = args["tool_name"]
             ?: return McpToolRouter.ToolResult("Missing 'tool_name' argument", isError = true)
         val inputJson = args["input"].orEmpty()
+        val toolUseId = args["tool_use_id"].orEmpty()
 
         if (isAutoAllowed(toolName)) {
             logDecision("trusted-auto-allow", toolName, inputJson)
@@ -71,11 +91,21 @@ class McpPermissionPromptTool(
         // "answer came through empty" result (see issue #141).
         if (shouldSilentlyAllow(toolName)) {
             logDecision("allow-all", toolName, inputJson)
-            dispatcherSupplier().notifyAutoAllowed(toolName, inputJson)
+            autoAllowNotifier.notify(toolName, inputJson, toolUseId)
             return McpToolRouter.ToolResult(buildAllowJson(inputJson))
         }
 
-        val result = dispatcherSupplier().submit(toolName, inputJson)
+        val routed = dispatcherResolver(toolName, inputJson, toolUseId)
+        if (routed == null) {
+            // No ChatPanel claims this call. This happens if the panel was
+            // closed between the ToolUse event and the request_permission
+            // round-trip, or if the routing entry was already consumed by
+            // another path. Deny safely so the CLI doesn't stall waiting on
+            // a UI that doesn't exist.
+            logDecision("no-router", toolName, inputJson)
+            return McpToolRouter.ToolResult(buildDenyJson("No active chat panel claimed this tool call"))
+        }
+        val result = routed.dispatcher.submit(toolName, inputJson, toolUseId = routed.toolUseId)
         if (result.timedOut) {
             logDecision("prompt-timeout", toolName, inputJson)
             return McpToolRouter.ToolResult(buildTimedOutJson())

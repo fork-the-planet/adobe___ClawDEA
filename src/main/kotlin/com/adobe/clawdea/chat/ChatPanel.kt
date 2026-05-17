@@ -17,7 +17,8 @@ import com.adobe.clawdea.chat.editreview.EditReviewHandler
 import com.adobe.clawdea.chat.permission.AskUserQuestionRenderer
 import com.adobe.clawdea.chat.permission.ClaudePermissionSettingsWriter
 import com.adobe.clawdea.chat.permission.PermissionDispatcher
-import com.adobe.clawdea.chat.permission.PermissionDispatcherHolder
+import com.adobe.clawdea.chat.permission.PermissionRouter
+import com.adobe.clawdea.chat.permission.PermissionRouterRegistry
 import com.adobe.clawdea.chat.permission.PermissionRequestHandler
 import com.adobe.clawdea.chat.permission.PermissionRequestRenderer
 import com.adobe.clawdea.cli.CliBridge
@@ -163,7 +164,6 @@ class ChatPanel(
     private val askUserQuestionRenderer = AskUserQuestionRenderer(renderer)
     private val permissionDispatcher: PermissionDispatcher = PermissionDispatcher(
         onRender = { req -> permissionRequestHandler.onRender(req) },
-        onAutoAllowed = { req -> permissionRequestHandler.onAutoAllowed(req) },
     )
     private val permissionRequestHandler: PermissionRequestHandler = PermissionRequestHandler(
         dispatcher = permissionDispatcher,
@@ -316,6 +316,15 @@ class ChatPanel(
             isUserInputPending = { permissionDispatcher.hasInFlightRequests() },
             onShowErrorNotification = { msg -> showNotification("ClawDEA", msg, NotificationType.ERROR) },
             onTurnSucceeded = { consecutivePromptStalls = 0 },
+            consumeAutoAllow = { toolUseId, toolName, inputJson ->
+                val signal = com.adobe.clawdea.chat.permission.AutoAllowSignal.getInstance(project)
+                signal.consume(toolUseId) || signal.consume(toolName, inputJson)
+            },
+            isToolAutoAllowed = { toolName ->
+                McpServer.getInstance(project).activeToolApprovalMode == "allow-all" &&
+                    toolName != "AskUserQuestion" &&
+                    !toolName.startsWith("mcp__clawdea-intellij__")
+            },
         )
 
         // Session manager: handles resume, reload, wake recovery, interactive terminal
@@ -361,9 +370,21 @@ class ChatPanel(
         // Permission approval bridge: Allow/Deny buttons from permission cards.
         permissionRequestHandler.install(permissionDecisionQuery)
 
-        // Expose this panel's dispatcher to the project-level McpServer so the
-        // `request_permission` MCP tool can call into it.
-        PermissionDispatcherHolder.getInstance(project).set(permissionDispatcher)
+        // Register this panel as a permission router so the project-level
+        // McpServer can route `request_permission` calls to whichever panel
+        // actually emitted the matching ToolUse — not whichever panel happens
+        // to be focused. The router's claim() consults EventStreamHandler's
+        // recent-ToolUse map, which is panel-local.
+        PermissionRouterRegistry.getInstance(project).register(
+            router = object : PermissionRouter {
+                override fun claimById(toolUseId: String): Boolean =
+                    eventHandler.claimPermissionById(toolUseId)
+
+                override fun claim(toolName: String, inputJson: String): String? =
+                    eventHandler.claimPermission(toolName, inputJson)
+            },
+            dispatcher = permissionDispatcher,
+        )
 
         // Open-file bridge: Read tool links open the file in the editor
         openFileQuery.addHandler { filePath ->
@@ -1824,7 +1845,7 @@ class ChatPanel(
 
     override fun dispose() {
         scope.cancel()
-        PermissionDispatcherHolder.getInstance(project).clear(permissionDispatcher)
+        PermissionRouterRegistry.getInstance(project).unregister(permissionDispatcher)
         if (::driftListenerUnregister.isInitialized) {
             try { driftListenerUnregister() } catch (_: Throwable) {}
         }

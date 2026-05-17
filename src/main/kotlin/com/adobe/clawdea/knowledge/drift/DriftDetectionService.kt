@@ -189,7 +189,15 @@ class DriftDetectionService(private val project: Project) {
             val authoredApplied = needsAuthor.filter { it.signature in authoredAcked }
 
             val applied = deterministicApplied + authoredApplied
-            val remaining = events - applied.toSet()
+            // When autoUpdateEnabled, hide wiki-author events from the banner:
+            // they are being handled by the subagent, which will surface its own UI
+            // (edit-review dialog, chat panel render) as needed. Don't re-surface
+            // them in the "remaining" list that feeds the drift banner.
+            val remaining = if (autoUpdateEnabled) {
+                events - applied.toSet() - needsAuthor.toSet()
+            } else {
+                events - applied.toSet()
+            }
             val newState = beforeState.copy(
                 dismissed = beforeState.dismissed + applied.map { it.signature },
             )
