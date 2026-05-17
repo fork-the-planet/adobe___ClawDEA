@@ -135,6 +135,10 @@ class CliProcess(
             }
 
             val systemPrompt = buildString {
+                if (settings.enableWikiLibrarian) {
+                    append(WIKI_LIBRARIAN_PROMPT)
+                    append("\n\n")
+                }
                 append(MCP_SYSTEM_PROMPT)
                 append("\n\n")
                 append(EDIT_REVIEW_PROMPT)
@@ -526,6 +530,23 @@ Debug tool guidelines:
 - When done debugging, call debug_stop to clean up your breakpoints and restore any user breakpoints you disabled.
 - Use debug_evaluate to test hypotheses. Use debug_set_value to modify variables at runtime to verify fix ideas without recompiling.
 - When investigating runtime bugs, prefer setting a breakpoint and inspecting live state over guessing from static reads. Combine with code-index tools: indices to locate, debugger to observe.
+        """.trimIndent()
+
+        private val WIKI_LIBRARIAN_PROMPT = """
+Wiki-knowledge routing:
+For any non-trivial question about how THIS PROJECT works — architecture, contracts between subsystems, where something lives, how a flow happens, why one approach instead of another — your FIRST tool call MUST be:
+
+  Task(subagent_type="wiki-librarian", prompt="<the user's question, verbatim or paraphrased>")
+
+The wiki-librarian subagent holds this project's design knowledge (`.claude/wiki/`) in its own fresh context every call, reads the relevant concept pages, verifies against current source where it matters, and returns a synthesised answer with page citations. You then use that answer to drive any follow-up code work.
+
+Not `Read`. Not `search_text`. Not `find_symbol`. Not `Bash`. One `Task` call FIRST, then everything else is unrestricted.
+
+Two narrow exceptions where you may skip the librarian:
+1. You already have a specific wiki page slug from a previous turn — read it directly via `read_wiki_page(name='<slug>', kind='concept')`.
+2. Purely lexical edits where you already know the exact symbol or string to change (renames, formatting, lint, single-typo fixes on a known location).
+
+If the user's question is about the codebase as a project (not "fix this typo on line 42"), go through the librarian first. No exceptions beyond the two above.
         """.trimIndent()
 
         private val EDIT_REVIEW_PROMPT = """

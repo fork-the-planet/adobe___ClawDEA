@@ -24,15 +24,15 @@ class WikiIndexSource : PrimerSource {
     override fun load(project: Project): String? {
         val basePath = project.basePath ?: return null
         val state = ClawDEASettings.getInstance().state
+        // When the librarian is on, the system-prompt prefix (WIKI_LIBRARIAN_PROMPT
+        // in CliProcess) carries the routing instructions, and the librarian
+        // subagent reads the index itself in its own fresh context. Emitting
+        // either here just creates a bypass temptation for the main agent.
+        if (state.enableWikiLibrarian) return null
         val wikiDir = Paths.get(basePath, state.claudeDirName, state.wikiSubdir)
         val reader = WikiPageReader(WikiPath(wikiDir))
         val index = reader.readIndex() ?: return null
-        val directive = if (state.enableWikiLibrarian) {
-            buildLibrarianDirective()
-        } else {
-            buildLegacyDirective(wikiDir.toString(), state.autoUpdateWiki)
-        }
-        return directive + "\n\n" + index
+        return buildLegacyDirective(wikiDir.toString(), state.autoUpdateWiki) + "\n\n" + index
     }
 
     companion object {
@@ -40,47 +40,7 @@ class WikiIndexSource : PrimerSource {
         // and 2d41a87f (#86) all skipped the wiki under successively softer
         // wording. The hard-rule pattern (first call must be a wiki action,
         // exact tool named, alternatives explicitly listed) is what finally
-        // worked. The v2 librarian directive evolves from the same lineage —
-        // the first call moves from `search_wiki` to `Task(wiki-librarian)`,
-        // but the hard-rule shape is preserved.
-
-        internal fun buildLibrarianDirective(): String =
-            """
-                |## How this project's wiki works
-                |
-                |This project has a **wiki-librarian subagent** that holds the project's
-                |design knowledge in its own fresh context every call. You ask it
-                |questions; it answers from `.claude/wiki/`, verifies against current
-                |source where it matters, and returns a synthesised answer with page
-                |citations.
-                |
-                |**Hard rule: for any non-trivial question about how this project works** —
-                |"where is X", "how does Y work", "what is the contract of Z", "why does
-                |this do A instead of B" — your FIRST tool call must be:
-                |
-                |    Task(subagent_type="wiki-librarian", prompt="<the user's question, verbatim>")
-                |
-                |Not `Read`, not `search_text`, not `find_symbol`, not `Bash`. Exactly one
-                |`Task` invocation. The librarian will name the files and entry points
-                |to open; then the other tools are unrestricted.
-                |
-                |Two narrow exceptions:
-                |
-                |1. **You already have a wiki page slug.** If a previous turn or the
-                |   librarian itself named `concepts/<slug>.md`, you can re-read it
-                |   directly via `read_wiki_page(name='<slug>', kind='concept')` without
-                |   a Task round-trip. The librarian is for *finding* and *synthesising*;
-                |   direct read is for known pages.
-                |
-                |2. **Purely lexical edits.** Renames, formatting, lint where you already
-                |   know the exact symbol or string. No design question = no librarian
-                |   call.
-                |
-                |Below is the wiki index — use it to scope your question to the librarian
-                |("how does the primer's wiki directive get built?" beats "wiki"). The
-                |index is titles only; the actual knowledge is on the concept pages,
-                |which only the librarian reads in a fresh context every time.
-            """.trimMargin()
+        // worked for the legacy `search_wiki` flow and is preserved below.
 
         internal fun buildLegacyDirective(wikiDir: String, autoUpdate: Boolean): String {
             val gapAction = if (autoUpdate) {

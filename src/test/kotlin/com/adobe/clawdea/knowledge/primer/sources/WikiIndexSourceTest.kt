@@ -11,39 +11,14 @@
  */
 package com.adobe.clawdea.knowledge.primer.sources
 
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class WikiIndexSourceTest {
 
-    // --- Librarian directive (default, enableWikiLibrarian=true) ---
-
-    @Test fun `librarian directive teaches Task delegation`() {
-        val directive = WikiIndexSource.buildLibrarianDirective()
-        assertTrue(directive.contains("wiki-librarian"))
-        assertTrue(directive.contains("Task(subagent_type=\"wiki-librarian\""))
-        assertTrue(directive.contains("Hard rule"))
-    }
-
-    @Test fun `librarian directive preserves read_wiki_page escape hatch`() {
-        val directive = WikiIndexSource.buildLibrarianDirective()
-        assertTrue(directive.contains("read_wiki_page"))
-    }
-
-    @Test fun `librarian directive does not mention search_wiki`() {
-        val directive = WikiIndexSource.buildLibrarianDirective()
-        assertFalse(
-            "search_wiki should not appear in librarian directive",
-            directive.contains("search_wiki"),
-        )
-    }
-
-    @Test fun `librarian directive carves out the two exceptions`() {
-        val directive = WikiIndexSource.buildLibrarianDirective()
-        assertTrue(directive.contains("already have a wiki page slug"))
-        assertTrue(directive.contains("Purely lexical edits"))
-    }
+    // The librarian path is exercised at the CLI invocation layer
+    // (WIKI_LIBRARIAN_PROMPT in CliProcess); WikiIndexSource itself emits
+    // nothing in that mode, so there is no source-level directive to test.
 
     // --- Legacy directive (enableWikiLibrarian=false) ---
 
