@@ -82,4 +82,51 @@ class DriftEventTest {
         val b = a.copy(title = "t2", rationale = "r2", recordedAt = "2026-05-17T18:00:00Z")
         assertEquals(a.signature, b.signature)
     }
+
+    @Test fun `WikiSuggestion signature uses non-index target as primary`() {
+        val event = DriftEvent.WikiSuggestion(
+            kind = SuggestionKind.missingConcept,
+            title = "Add concept for FilesystemRefreshCoordinator",
+            rationale = "Multiple subsystems reference it; no page exists.",
+            targetFiles = listOf(
+                ".claude/wiki/concepts/filesystem-refresh-coordinator.md",
+                ".claude/wiki/index.md",
+            ),
+            sourcePage = null,
+            recordedAt = "2026-05-16T16:30:00Z",
+        )
+        assertEquals(
+            "wiki-suggestion:missingConcept:.claude/wiki/concepts/filesystem-refresh-coordinator.md",
+            event.signature,
+        )
+    }
+
+    @Test fun `WikiSuggestion signature falls back to first target when only index present`() {
+        val event = DriftEvent.WikiSuggestion(
+            kind = SuggestionKind.incompleteConcept,
+            title = "Cover primer ordering on index",
+            rationale = "Index lacks rationale.",
+            targetFiles = listOf(".claude/wiki/index.md"),
+            sourcePage = ".claude/wiki/index.md",
+            recordedAt = "2026-05-16T16:30:00Z",
+        )
+        assertEquals(
+            "wiki-suggestion:incompleteConcept:.claude/wiki/index.md",
+            event.signature,
+        )
+    }
+
+    @Test fun `WikiSuggestion signature differs across kinds for same target`() {
+        val target = ".claude/wiki/concepts/primer.md"
+        val missing = DriftEvent.WikiSuggestion(
+            kind = SuggestionKind.missingConcept,
+            title = "x",
+            rationale = "y reason",
+            targetFiles = listOf(target),
+            sourcePage = null,
+            recordedAt = "2026-05-16T16:30:00Z",
+        )
+        val stale = missing.copy(kind = SuggestionKind.staleConcept)
+        assertNotEquals(missing.signature, stale.signature)
+    }
 }
