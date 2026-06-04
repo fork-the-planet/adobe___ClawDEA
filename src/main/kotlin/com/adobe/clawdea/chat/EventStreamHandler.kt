@@ -29,6 +29,7 @@ class EventStreamHandler(
     private val editReviewCoordinator: EditReviewCoordinator,
     private val taskWidget: TaskWidgetController,
     private val subAgentController: SubAgentController,
+    private val goalController: GoalController,
     private val turnController: TurnController,
     private val statusLabel: JLabel,
     private val scope: CoroutineScope,
@@ -355,6 +356,18 @@ class EventStreamHandler(
             }
             is CliEvent.Result -> {
                 browserRenderer.hideThinkingIndicator()
+                // A `/goal` loop ends with a single trailing result. On success
+                // the condition was met → show "achieved". On an error result
+                // (CLI crash/abort), just clear the banner without claiming success.
+                if (!event.isError) {
+                    goalController.onResult()?.let { achieved ->
+                        browserRenderer.hideGoalBanner()
+                        browserRenderer.appendHtml(renderer.renderGoalAchieved(achieved))
+                    }
+                } else if (goalController.current() != null) {
+                    goalController.onClear()
+                    browserRenderer.hideGoalBanner()
+                }
                 // Any sub-agent still active at turn end was aborted/interrupted —
                 // finalize its card into an aborted state (stays expanded).
                 for (id in subAgentController.activeIds()) {
@@ -461,6 +474,13 @@ class EventStreamHandler(
             // ToolResult branch above, not dispatched through the event flow.
             // These branches exist only for sealed-class exhaustiveness.
             is CliEvent.TaskEvent -> {}
+            is CliEvent.GoalFeedback -> {
+                goalController.onFeedback(event.condition, event.reason)
+                goalController.current()?.let { state ->
+                    browserRenderer.updateGoalBanner(renderer.renderGoalBanner(state))
+                }
+                browserRenderer.appendHtml(renderer.renderGoalProgress(event.reason))
+            }
         }
     }
 
@@ -556,6 +576,7 @@ class EventStreamHandler(
                 is CliEvent.TextDelta,
                 is CliEvent.AssistantMessage,
                 is CliEvent.ToolResult,
+                is CliEvent.GoalFeedback,
                 is CliEvent.Result,
                 is CliEvent.AuthFailure -> true
                 is CliEvent.SystemInit,

@@ -117,6 +117,7 @@ class ChatPanel(
     // Task widget
     private val taskWidget = TaskWidgetController()
     private val subAgentController = SubAgentController()
+    private val goalController = GoalController()
 
     // JS→Kotlin bridge for opening diff editor from chat link
     private val openDiffQuery = JBCefJSQuery.create(browser as JBCefBrowserBase)
@@ -356,6 +357,7 @@ class ChatPanel(
             editReviewCoordinator = editReviewHandler.coordinator,
             taskWidget = taskWidget,
             subAgentController = subAgentController,
+            goalController = goalController,
             turnController = turnController,
             statusLabel = statusLabel,
             scope = scope,
@@ -1145,6 +1147,10 @@ class ChatPanel(
             CommandInfo("/init", "Initialize CLAUDE.md for this project", CommandCategory.BRIDGE),
         ))
 
+        commandRegistry.register("/goal", BridgeForwardHandler(
+            CommandInfo("/goal", "Set a completion condition Claude works toward across turns", CommandCategory.BRIDGE),
+        ))
+
         commandRegistry.register("/note", com.adobe.clawdea.commands.handlers.NoteAppendHandler(project, scope))
 
         commandRegistry.register("/promote-to-wiki", com.adobe.clawdea.commands.handlers.PromoteToWikiHandler.create(project))
@@ -1710,6 +1716,16 @@ class ChatPanel(
 
             val match = commandRegistry.resolve(text)
             val handler = match?.handler
+            // /goal must act immediately — especially `/goal clear`/`/goal stop`.
+            // Queuing it behind a long-running goal turn would defer it (and join
+            // it with other queued text), which is how a malformed
+            // "clear\n/goal clear" goal gets created. Route it now; the clear
+            // path interrupts the loop, the set path replaces it cleanly.
+            if (handler?.info?.name == "/goal") {
+                inputArea.text = ""
+                sendTextThroughNormalRouting(text)
+                return
+            }
             if (handler?.info?.name == "/refresh-wiki") {
                 val refreshArgs = RefreshWikiArgs.parse(match.args)
                 val localOnly = refreshArgs.statusOnly ||
@@ -1745,6 +1761,14 @@ class ChatPanel(
             val match = commandRegistry.resolve(text)
             if (match != null) {
                 val handler = match.handler
+                if (handler.info.name == "/goal") {
+                    // /goal is fully owned by handleGoalCommand (banner state +
+                    // the forward/abort decision), so it must not also run
+                    // BridgeForwardHandler.execute or fall through to the verbatim
+                    // forward below.
+                    handleGoalCommand(match.args)
+                    return
+                }
                 match.handler.execute(match.args, buildCommandContext())
                 when (handler) {
                     is BridgeForwardHandler -> { /* fall through; send `text` verbatim */ }
@@ -1772,6 +1796,67 @@ class ChatPanel(
         }
 
         dispatchSendToBridge(text)
+    }
+
+    /**
+     * Fully handle a `/goal` command: update ClawDEA's banner state, then get the
+     * command to the CLI. `/goal` does NOT go through BridgeForwardHandler's
+     * verbatim forward — this method owns it so a running goal is stopped correctly.
+     *
+     * A goal's auto-continue is one long streaming turn. The only reliable way to
+     * stop it is to interrupt that turn — exactly what Esc→Stop ([abort]) does.
+     * Crucially we must NOT start any follow-up turn afterward: a message sent
+     * right after the interrupt never returns a result in this CLI mode, which
+     * left the thinking indicator stuck. So a `/goal` issued mid-stream simply
+     * interrupts (and, for a replace, asks the user to re-issue once idle).
+     * Idle `/goal …` is forwarded normally.
+     */
+    private fun handleGoalCommand(args: String) {
+        val trimmed = args.trim()
+        val streaming = turnController.isStreaming || turnController.isPaused
+        val isClear = trimmed.lowercase() in GOAL_CLEAR_ALIASES
+
+        if (streaming) {
+            // A bare `/goal` status query mid-loop shouldn't stop anything.
+            if (trimmed.isEmpty()) return
+            // Stop the running goal's loop the proven clean way. No follow-up turn.
+            goalController.onClear()
+            browserRenderer.hideGoalBanner()
+            stopStreamingTurnQuietly()
+            if (!isClear) {
+                appendHtml(renderer.renderInfoMessage(
+                    "Stopped the active goal. Send `/goal <condition>` again to set a new one.",
+                ))
+            }
+            return
+        }
+
+        // Idle: forward to the CLI (set / clear / status) — clean, no interrupt.
+        if (isClear) {
+            goalController.onClear()
+            browserRenderer.hideGoalBanner()
+        } else if (trimmed.isNotEmpty()) {
+            goalController.onSet(trimmed)
+            goalController.current()?.let { browserRenderer.updateGoalBanner(renderer.renderGoalBanner(it)) }
+        }
+        dispatchSendToBridge(if (trimmed.isEmpty()) "/goal" else "/goal $trimmed")
+    }
+
+    /**
+     * Interrupt a streaming turn the way [abort] does, but without the
+     * "Response aborted by user" notice — used to stop a running goal's
+     * auto-continue loop when the user clears it. No follow-up turn is started.
+     */
+    private fun stopStreamingTurnQuietly() {
+        if (!turnController.isStreaming && !turnController.isPaused) return
+        bridge.abort()
+        turnController.resetTurnState()
+        clearQueuedPrompt()
+        syncStreamingUi()
+        browserRenderer.hidePausedBanner()
+        browserRenderer.hideThinkingIndicator()
+        browserRenderer.hideAllStopButtons()
+        statusLabel.text = " "
     }
 
     private fun queueCurrentComposerText(): Boolean {
@@ -2111,6 +2196,8 @@ class ChatPanel(
         // value (200K Sonnet vs 1M Opus 4.7). The CLI's auto-compaction kicks in
         // around ~80% of the actual window.
         private const val DEFAULT_CONTEXT_WINDOW_TOKENS = 200_000
+
+        private val GOAL_CLEAR_ALIASES = setOf("clear", "stop", "off", "reset", "none", "cancel")
 
         // Resume on the first prompt-start stall (transient slow-first-byte / network blip).
         // Escalate to a fresh restart on the second consecutive stall — at that point the
