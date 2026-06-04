@@ -28,6 +28,7 @@ class EventStreamHandler(
     private val browserRenderer: ChatBrowserRenderer,
     private val editReviewCoordinator: EditReviewCoordinator,
     private val taskWidget: TaskWidgetController,
+    private val subAgentController: SubAgentController,
     private val turnController: TurnController,
     private val statusLabel: JLabel,
     private val scope: CoroutineScope,
@@ -143,9 +144,59 @@ class EventStreamHandler(
                 statusLabel.text = "Connected"
             }
             is CliEvent.TextDelta -> {
-                messageBuffer.append(event.text)
+                // Sub-agent reasoning tokens must not leak into the main bubble;
+                // the child `assistant` message carries the full text and is
+                // rendered into the sub-agent card instead.
+                if (subAgentController.parentCardFor(event.parentToolUseId) == null) {
+                    messageBuffer.append(event.text)
+                }
             }
             is CliEvent.AssistantMessage -> {
+                val parentCard = subAgentController.parentCardFor(event.parentToolUseId)
+                if (parentCard != null) {
+                    // Inner content of a running sub-agent.
+                    if (messageBuffer.isNotEmpty()) messageBuffer.clear()  // guard: discard any buffered main-agent text before rendering inner content
+                    if (event.text.isNotBlank()) {
+                        browserRenderer.appendIntoSubAgent(parentCard, renderer.renderAssistantText(event.text))
+                    }
+                    for (toolUse in event.toolUses) {
+                        toolNameById[toolUse.id] = toolUse.name
+                        toolInputById[toolUse.id] = toolUse.input
+                        routableToolUses[toolUse.id] = toolUse.name + " " + toolUse.input
+                        toolStartTime = System.currentTimeMillis()
+                        val count = subAgentController.recordStep(parentCard)
+
+                        // Inner edit/propose tools: capture content so the diff and
+                        // filesystem refresh work, and render a clickable edit-link
+                        // (renderToolUseEvent) rather than a bare step row. All the
+                        // result-time hooks (resolveEditOutcome, getCapturedFilePath,
+                        // updateEditLinkStatus) key off data-tool-id globally, so they
+                        // operate correctly on the nested link.
+                        val isEditOrPropose = EditReviewCoordinator.isProposeTool(toolUse.name) ||
+                            EditReviewCoordinator.isEditTool(toolUse.name)
+                        val stepHtml = if (isEditOrPropose) {
+                            val filePath = EditReviewCoordinator.extractFilePath(toolUse.input) ?: toolUse.name
+                            val file = java.io.File(filePath)
+                            val originalContent = if (file.exists()) file.readText() else ""
+                            val proposedContent = EditReviewCoordinator.buildProposedContent(originalContent, toolUse.name, toolUse.input)
+                            editReviewCoordinator.captureFileContent(toolUse.id, filePath, originalContent, proposedContent)
+                            renderer.renderToolUseEvent(
+                                toolName = toolUse.name,
+                                input = toolUse.input,
+                                toolUseId = toolUse.id,
+                                mode = ToolMode.Live(autoAcceptEdits = renderer.autoAcceptEdits),
+                            )
+                        } else {
+                            renderer.renderInnerToolUse(toolUse.name, toolUse.input, toolUse.id)
+                        }
+                        if (stepHtml.isNotBlank()) browserRenderer.appendIntoSubAgent(parentCard, stepHtml)
+                        browserRenderer.updateSubAgentStatus(parentCard, "&#9203; running &middot; $count steps")
+                    }
+                    onContextLabelUpdate()
+                    return
+                }
+
+                // Top-level (main agent) content.
                 if (messageBuffer.isNotEmpty()) {
                     val bufText = messageBuffer.toString()
                     browserRenderer.appendHtml(renderer.renderAssistantText(bufText))
@@ -171,6 +222,14 @@ class EventStreamHandler(
                     // ToolResult arrives strictly after request_permission
                     // returns, so the signal is reliably present by then.
                     toolStartTime = System.currentTimeMillis()
+
+                    if (SubAgentController.isSubAgentTool(toolUse.name)) {
+                        val agentType = MessageRenderer.extractJsonString(toolUse.input, "subagent_type") ?: "agent"
+                        val description = MessageRenderer.extractJsonString(toolUse.input, "description") ?: ""
+                        subAgentController.register(toolUse.id, agentType, description, System.currentTimeMillis())
+                        browserRenderer.appendHtml(renderer.renderSubAgentCard(agentType, description, toolUse.id))
+                        continue
+                    }
 
                     // Side effects that only make sense live: track for the
                     // task widget, capture edit content for diff/revert.
@@ -204,6 +263,25 @@ class EventStreamHandler(
                 onContextLabelUpdate()
             }
             is CliEvent.ToolResult -> {
+                // The sub-agent's own result: collapse its card to a summary.
+                if (subAgentController.isActive(event.toolUseId)) {
+                    val status = if (event.isError) SubAgentController.Status.ERROR else SubAgentController.Status.DONE
+                    val state = subAgentController.finalize(event.toolUseId, status)
+                    if (state != null) {
+                        browserRenderer.finalizeSubAgent(
+                            event.toolUseId,
+                            renderer.renderSubAgentSummary(status, state.stepCount, event.content),
+                        )
+                    }
+                    routableToolUses.remove(event.toolUseId)
+                    toolNameById.remove(event.toolUseId)
+                    toolInputById.remove(event.toolUseId)
+                    toolStartTime = 0
+                    onContextLabelUpdate()
+                    watchForToolResultStall(progressSequence)
+                    return
+                }
+
                 // Check for task events
                 val pendingToolUse = pendingToolUses.remove(event.toolUseId)
                 if (pendingToolUse != null) {
@@ -277,6 +355,14 @@ class EventStreamHandler(
             }
             is CliEvent.Result -> {
                 browserRenderer.hideThinkingIndicator()
+                // Any sub-agent still active at turn end was aborted/interrupted —
+                // finalize its card into an aborted state (stays expanded).
+                for (id in subAgentController.activeIds()) {
+                    val state = subAgentController.finalize(id, SubAgentController.Status.ABORTED)
+                    if (state != null) {
+                        browserRenderer.updateSubAgentStatus(id, "&#9632; aborted")
+                    }
+                }
                 if (messageBuffer.isNotEmpty()) {
                     browserRenderer.appendHtml(renderer.renderAssistantText(messageBuffer.toString()))
                     messageBuffer.clear()
