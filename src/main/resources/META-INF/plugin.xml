@@ -115,6 +115,14 @@ integration and is not affiliated with or endorsed by Anthropic or JetBrains.</i
     ]]></description>
 
     <change-notes><![CDATA[
+<h3>1.7.1</h3>
+<h4>Wiki authoring that actually lands, and a tidier project footprint</h4>
+<ul>
+  <li><b>Fixed: recorded wiki suggestions now get written.</b> When the wiki librarian recorded a &ldquo;missing concept&rdquo; suggestion, the page could sit unwritten &mdash; the authoring pass ran on a slow periodic tick (or got wedged) and sometimes reported success without producing a file. Recording a suggestion now kicks off authoring immediately, the author has more time to finish, and a page is verified on disk before the suggestion is marked done.</li>
+  <li><b>No more leftover <code>claude</code> processes.</b> Background <code>claude -p</code> helper processes are now tracked and cleaned up when the plugin unloads or the IDE quits, instead of lingering after you close the IDE.</li>
+  <li><b>Tidier project footprint.</b> ClawDEA's own per-project files (the default-mode wiki and the generated repo-state summary) now live under <code>.clawdea/</code> instead of <code>.claude/</code>, and existing projects are migrated automatically on startup &mdash; nothing to do by hand. The redundant <code>SIBLINGS.md</code> file is no longer written.</li>
+</ul>
+
 <h3>1.7.0</h3>
 <h4>Sub-agents are now first-class in the chat</h4>
 <ul>
