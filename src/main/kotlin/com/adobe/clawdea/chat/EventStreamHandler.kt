@@ -52,6 +52,7 @@ class EventStreamHandler(
     private val consumeAutoAllow: (toolUseId: String, toolName: String, inputJson: String) -> Boolean = { _, _, _ -> false },
     private val isToolAutoAllowed: (toolName: String) -> Boolean = { _ -> false },
     private val costTracker: com.adobe.clawdea.cost.CostTracker,
+    private val savingsTracker: com.adobe.clawdea.cost.SavingsTracker,
     /** Stable per-tab id for per-chat cost accounting. */
     private val chatId: String,
     private val resolveEffort: () -> String,
@@ -69,6 +70,15 @@ class EventStreamHandler(
      */
     private var pendingKnowledgeBucket: com.adobe.clawdea.cost.KnowledgeBucket? = null
 
+    // --- Savings-estimation per-turn accumulators (top-level only; reset each Result) ---
+    private val turnIndexToolHits = mutableListOf<com.adobe.clawdea.cost.IndexToolObservation>()
+    // toolUseId -> index-tool name, for sizing the matching ToolResult.
+    private val pendingIndexToolUses = mutableMapOf<String, String>()
+    // Subagent dispatches this turn (wiki-librarian, etc.) for the librarian lever.
+    private val turnSubagents = mutableListOf<com.adobe.clawdea.cost.SubagentObservation>()
+    // Subagent card id -> tokens read by inner tool results (Read / MCP) this turn.
+    private val subagentReadTokens = mutableMapOf<String, Int>()
+
     /**
      * Called by the panel right before a user-originated prompt is sent to the bridge.
      * [explicitBucket] lets the caller name the knowledge bucket directly — required for
@@ -82,7 +92,20 @@ class EventStreamHandler(
     ) {
         pendingKnowledgeBucket = explicitBucket
             ?: com.adobe.clawdea.cost.KnowledgeBucketClassifier.classify(promptText)
+        turnIndexToolHits.clear()
+        pendingIndexToolUses.clear()
+        turnSubagents.clear()
+        subagentReadTokens.clear()
     }
+
+    /**
+     * Conservative primer-overhead proxy: the wiki TOC + REPO_STATE are a small, roughly FIXED slice
+     * of the cached prefix ClawDEA ships each turn. We take a flat fraction of the turn's cache tokens
+     * but cap it at [PRIMER_TOKENS_CEILING] — the primer is fixed-size, so on huge-context turns a raw
+     * percentage would overstate it. Kept conservative so the cost lever never overstates the debit.
+     */
+    private fun primerTokensFrom(turnCacheTokens: Int): Int =
+        (turnCacheTokens * PRIMER_CACHE_FRACTION).toInt().coerceAtMost(PRIMER_TOKENS_CEILING)
 
     var totalTokensUsed = 0
     // Context window for the model in use, as reported by CC's `result.modelUsage`.
@@ -178,18 +201,25 @@ class EventStreamHandler(
                 statusLabel.text = "Connected"
             }
             is CliEvent.TextDelta -> {
-                // Sub-agent reasoning tokens must not leak into the main bubble;
-                // the child `assistant` message carries the full text and is
-                // rendered into the sub-agent card instead.
-                if (subAgentController.parentCardFor(event.parentToolUseId) == null) {
+                // Only the main agent (null parent) streams into the shared main
+                // buffer. Any delta that carries a parent — a depth-1 sub-agent
+                // OR a deeper nested one whose card we don't track — must never
+                // leak into the main bubble: the child `assistant` message
+                // carries the full text and is rendered into its own card. This
+                // keeps parallel sub-agent output from corrupting the main
+                // stream mid-phrase.
+                if (isMainAgentStream(event.parentToolUseId)) {
                     messageBuffer.append(event.text)
                 }
             }
             is CliEvent.AssistantMessage -> {
                 val parentCard = subAgentController.parentCardFor(event.parentToolUseId)
                 if (parentCard != null) {
-                    // Inner content of a running sub-agent.
-                    if (messageBuffer.isNotEmpty()) messageBuffer.clear()  // guard: discard any buffered main-agent text before rendering inner content
+                    // Inner content of a running sub-agent. Do NOT touch the
+                    // main buffer here — a parallel main-agent phrase may be
+                    // mid-stream, and clearing it would truncate the main
+                    // output. Main text flushes in order at the next top-level
+                    // assistant message or at Result.
                     if (event.text.isNotBlank()) {
                         browserRenderer.appendIntoSubAgent(parentCard, renderer.renderAssistantText(event.text))
                     }
@@ -248,6 +278,11 @@ class EventStreamHandler(
                 if (event.model.isNotBlank()) {
                     currentModel = event.model
                 }
+                for (tu in event.toolUses) {
+                    if (com.adobe.clawdea.cost.TurnObservationBuilder.isIndexTool(tu.name)) {
+                        pendingIndexToolUses[tu.id] = tu.name
+                    }
+                }
                 if (messageBuffer.isNotEmpty()) {
                     val bufText = messageBuffer.toString()
                     browserRenderer.appendHtml(renderer.renderAssistantText(bufText))
@@ -278,7 +313,11 @@ class EventStreamHandler(
                         val agentType = MessageRenderer.extractJsonString(toolUse.input, "subagent_type") ?: "agent"
                         val description = MessageRenderer.extractJsonString(toolUse.input, "description") ?: ""
                         subAgentController.register(toolUse.id, agentType, description, System.currentTimeMillis())
-                        browserRenderer.appendHtml(renderer.renderSubAgentCard(agentType, description, toolUse.id))
+                        // Live sub-agent cards are pinned in the bottom dock
+                        // (stacked when several run in parallel) so they stay
+                        // visible while active; finalizeSubAgent releases the
+                        // card back into the message flow once it completes.
+                        browserRenderer.startActiveAgent(renderer.renderSubAgentCard(agentType, description, toolUse.id))
                         continue
                     }
 
@@ -314,11 +353,37 @@ class EventStreamHandler(
                 onContextLabelUpdate()
             }
             is CliEvent.ToolResult -> {
+                // Accumulate inner reads for an active subagent (feeds librarian lever).
+                val subagentCard = event.parentToolUseId?.takeIf { subAgentController.isActive(it) }
+                if (subagentCard != null && !subAgentController.isActive(event.toolUseId)) {
+                    val tokens = com.adobe.clawdea.cost.TurnObservationBuilder.estimateTokens(event.content)
+                    subagentReadTokens.merge(subagentCard, tokens) { a, b -> a + b }
+                }
+                // Size any top-level index-tool result this turn.
+                val idxName = pendingIndexToolUses.remove(event.toolUseId)
+                    ?: toolNameById[event.toolUseId]?.takeIf { com.adobe.clawdea.cost.TurnObservationBuilder.isIndexTool(it) }
+                idxName?.let { name ->
+                    val tokens = com.adobe.clawdea.cost.TurnObservationBuilder.estimateTokens(event.content)
+                    val hits = (tokens / 100).coerceAtLeast(1)
+                    turnIndexToolHits.add(com.adobe.clawdea.cost.IndexToolObservation(name, hits, tokens))
+                }
                 // The sub-agent's own result: collapse its card to a summary.
                 if (subAgentController.isActive(event.toolUseId)) {
                     val status = if (event.isError) SubAgentController.Status.ERROR else SubAgentController.Status.DONE
                     val state = subAgentController.finalize(event.toolUseId, status)
                     if (state != null) {
+                        val summaryTokens = com.adobe.clawdea.cost.TurnObservationBuilder.estimateTokens(event.content)
+                        val readTokens = subagentReadTokens.remove(event.toolUseId) ?: 0
+                        val inputProxy = readTokens.coerceAtLeast(summaryTokens * 5)
+                        turnSubagents.add(
+                            com.adobe.clawdea.cost.SubagentObservation(
+                                agentType = state.agentType,
+                                costUsd = 0.0,
+                                summaryTokens = summaryTokens,
+                                filesReadTokens = readTokens,
+                                inputTokens = inputProxy,
+                            ),
+                        )
                         browserRenderer.finalizeSubAgent(
                             event.toolUseId,
                             renderer.renderSubAgentSummary(status, state.stepCount, event.content),
@@ -421,12 +486,17 @@ class EventStreamHandler(
                     goalController.onClear()
                     browserRenderer.hideGoalBanner()
                 }
-                // Any sub-agent still active at turn end was aborted/interrupted —
-                // finalize its card into an aborted state (stays expanded).
+                // Any sub-agent still active at turn end was aborted/interrupted.
+                // Finalize each card so it collapses and is released from the
+                // pinned bottom dock back into the normal message flow — an
+                // active card must never linger pinned after the turn ends.
                 for (id in subAgentController.activeIds()) {
                     val state = subAgentController.finalize(id, SubAgentController.Status.ABORTED)
                     if (state != null) {
-                        browserRenderer.updateSubAgentStatus(id, "&#9632; aborted")
+                        browserRenderer.finalizeSubAgent(
+                            id,
+                            renderer.renderSubAgentSummary(SubAgentController.Status.ABORTED, state.stepCount, ""),
+                        )
                     }
                 }
                 if (messageBuffer.isNotEmpty()) {
@@ -475,6 +545,21 @@ class EventStreamHandler(
                     knowledgeBucket = pendingKnowledgeBucket,
                 )
                 pendingKnowledgeBucket = null
+                val priorTurns = savingsTracker.snapshot(chatId).turnCount
+                val savingsObs = com.adobe.clawdea.cost.TurnObservationBuilder.build(
+                    model = currentModel,
+                    remainingTurns = priorTurns,
+                    subagents = turnSubagents.toList(),
+                    indexTools = turnIndexToolHits.toList(),
+                    primerCacheReadTokens = primerTokensFrom(event.cacheReadTokens),
+                    primerCacheCreationTokens = primerTokensFrom(event.cacheCreationTokens),
+                    knowledgeUpkeepUsd = 0.0,
+                )
+                savingsTracker.recordTurn(chatId, savingsObs)
+                turnIndexToolHits.clear()
+                pendingIndexToolUses.clear()
+                turnSubagents.clear()
+                subagentReadTokens.clear()
                 turnController.onStreamResult()
                 onSyncStreamingUi()
                 browserRenderer.hideAllStopButtons()
@@ -612,6 +697,11 @@ class EventStreamHandler(
         internal const val TURN_START_STALL_TIMEOUT_MS = 180_000
         internal const val TOOL_RESULT_STALL_TIMEOUT_MS = 180_000
 
+        private const val PRIMER_CACHE_FRACTION = 0.05
+
+        /** Absolute ceiling on per-turn primer tokens — the wiki TOC + REPO_STATE are a fixed payload. */
+        private const val PRIMER_TOKENS_CEILING = 4000
+
         internal fun shouldRecoverTurnStartStall(
             isStreaming: Boolean,
             bridgeRunning: Boolean,
@@ -641,6 +731,18 @@ class EventStreamHandler(
                 currentProgressSequence,
                 observedProgressSequence,
             )
+
+        /**
+         * True when streamed text belongs to the main agent and may be appended
+         * to the shared main-bubble buffer. Only a null parent qualifies: any
+         * text carrying a `parent_tool_use_id` originates from a sub-agent
+         * (whether a depth-1 card we track or a deeper nested one we don't) and
+         * must be rendered into that agent's own panel — never merged into the
+         * main stream, which would break the main output mid-phrase when
+         * sub-agents run in parallel.
+         */
+        internal fun isMainAgentStream(parentToolUseId: String?): Boolean =
+            parentToolUseId == null
 
         internal fun isTurnProgressEvent(event: CliEvent): Boolean =
             when (event) {

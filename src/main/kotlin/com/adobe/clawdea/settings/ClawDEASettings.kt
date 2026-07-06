@@ -41,6 +41,14 @@ class ClawDEASettings : PersistentStateComponent<ClawDEASettings.State> {
         var completionsEnabled: Boolean = true,
         var completionsModel: String = "sonnet",
         var completionsDebounceMs: Int = 300,
+        /**
+         * When true, inline completions are only requested when the user
+         * explicitly triggers them (the "Trigger Inline Completion" action /
+         * hotkey), never automatically while typing or moving the caret. This
+         * avoids spending API tokens on incidental edits. Default false keeps
+         * the automatic-as-you-type behavior (see issue #146).
+         */
+        var completionsManualOnly: Boolean = false,
         var defaultChatMode: String = "Auto",
         /** "confirm-all" | "allow-safe" | "allow-all". See docs/superpowers/specs/2026-04-29-permission-approval-ui-design.md. */
         var toolApprovalMode: String = "confirm-all",
@@ -163,6 +171,18 @@ class ClawDEASettings : PersistentStateComponent<ClawDEASettings.State> {
          * App-level so wiki/workspace upkeep reads as one bill regardless of which project ran it.
          */
         var knowledgeUsd: MutableMap<String, Double> = mutableMapOf(),
+        /**
+         * Persisted cumulative ClawDEA savings estimate (signed; positive = saving). Single
+         * global entry under key "global". Packed via SavingsTotal.format / parse. App-level so
+         * the all-time verdict persists across projects, like knowledgeUsd.
+         */
+        var savingsTotal: MutableMap<String, String> = mutableMapOf(),
+        /**
+         * GLOBAL per-lever estimated savings (Librarian routing, IDE index tools, …), keyed by
+         * [LeverId.name] → packed "low|expected|high". App-level so lever breakdowns aggregate
+         * across every project and chat tab, like knowledgeUsd.
+         */
+        var savingsByLever: MutableMap<String, String> = mutableMapOf(),
     )
 
     private var state = State()
